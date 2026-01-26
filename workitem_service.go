@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	internalhttp "github.com/almnorth/go-polarion/internal/http"
 )
@@ -40,11 +41,18 @@ func (s *WorkItemService) Get(ctx context.Context, id string, opts ...GetOption)
 		opt(&options)
 	}
 
+	// Extract work item ID from full ID if needed (e.g., "test/TEST-122" -> "TEST-122")
+	workItemID := id
+	if strings.Contains(workItemID, "/") {
+		parts := strings.Split(workItemID, "/")
+		workItemID = parts[len(parts)-1]
+	}
+
 	// Build URL - use the project-scoped endpoint
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(id))
+		url.PathEscape(workItemID))
 
 	// Add query parameters
 	params := url.Values{}
@@ -109,10 +117,12 @@ func (s *WorkItemService) Query(ctx context.Context, opts QueryOptions) (*PageRe
 	}
 	params.Set("page[number]", strconv.Itoa(pageNumber))
 
-	// Add field selection
-	if opts.Fields != nil {
-		opts.Fields.ToQueryParams(params)
+	// Add field selection (default to all fields if not specified)
+	fields := opts.Fields
+	if fields == nil {
+		fields = FieldsAll
 	}
+	fields.ToQueryParams(params)
 
 	// Add revision if specified
 	if opts.Revision != "" {
@@ -229,8 +239,10 @@ func (s *WorkItemService) Create(ctx context.Context, items ...*WorkItem) error 
 	return nil
 }
 
-// Update updates a work item.
+// Update updates a work item directly without comparison.
 // The work item must have an ID set.
+// All modifiable fields in the work item will be sent to the API.
+// Read-only fields (type, created, updated, resolvedOn) are automatically excluded.
 //
 // Example:
 //
@@ -254,9 +266,35 @@ func (s *WorkItemService) Update(ctx context.Context, item *WorkItem) error {
 		url.PathEscape(s.project.projectID),
 		url.PathEscape(workItemID))
 
-	// Prepare request body
+	// Prepare request body - exclude read-only fields
+	// Read-only fields: type, created, updated, resolvedOn
+	cleanAttrs := &WorkItemAttributes{
+		Title:             item.Attributes.Title,
+		Description:       item.Attributes.Description,
+		Status:            item.Attributes.Status,
+		Resolution:        item.Attributes.Resolution,
+		Priority:          item.Attributes.Priority,
+		Severity:          item.Attributes.Severity,
+		DueDate:           item.Attributes.DueDate,
+		PlannedStart:      item.Attributes.PlannedStart,
+		PlannedEnd:        item.Attributes.PlannedEnd,
+		InitialEstimate:   item.Attributes.InitialEstimate,
+		RemainingEstimate: item.Attributes.RemainingEstimate,
+		TimeSpent:         item.Attributes.TimeSpent,
+		OutlineNumber:     item.Attributes.OutlineNumber,
+		Hyperlinks:        item.Attributes.Hyperlinks,
+		CustomFields:      item.Attributes.CustomFields,
+		// Explicitly NOT including: Type, Created, Updated, ResolvedOn
+	}
+
+	updateItem := &WorkItem{
+		Type:       "workitems",
+		ID:         item.ID,
+		Attributes: cleanAttrs,
+	}
+
 	body := map[string]interface{}{
-		"data": item,
+		"data": updateItem,
 	}
 
 	// Make request with retry
@@ -265,7 +303,12 @@ func (s *WorkItemService) Update(ctx context.Context, item *WorkItem) error {
 		if err != nil {
 			return err
 		}
-		// Update the item with the response
+		// PATCH may return 204 No Content (empty body) or 200 OK with updated data
+		if resp.StatusCode == 204 {
+			resp.Body.Close()
+			return nil
+		}
+		// Update the item with the response if body is present
 		return internalhttp.DecodeDataResponse(resp, item)
 	})
 
@@ -274,6 +317,241 @@ func (s *WorkItemService) Update(ctx context.Context, item *WorkItem) error {
 	}
 
 	return nil
+}
+
+// UpdateWithOldValue updates a work item by comparing it with the original state.
+// Only changed fields are sent to the API.
+// The original parameter should be the work item as fetched from the server.
+// The updated parameter should be the work item with modifications.
+//
+// Example:
+//
+//	original, err := project.WorkItems.Get(ctx, "WI-123")
+//	if err != nil {
+//	    return err
+//	}
+//	updated := original
+//	updated.Attributes.Status = "approved"
+//	err = project.WorkItems.UpdateWithOldValue(ctx, original, updated)
+func (s *WorkItemService) UpdateWithOldValue(ctx context.Context, original, updated *WorkItem) error {
+	if updated.ID == "" {
+		return NewValidationError("ID", "work item ID is required for update")
+	}
+
+	// Extract work item ID from full ID if needed
+	workItemID := updated.ID
+	if strings.Contains(workItemID, "/") {
+		parts := strings.Split(workItemID, "/")
+		workItemID = parts[len(parts)-1]
+	}
+
+	// Compare and get only changed fields
+	changedAttrs := s.compareAttributes(original.Attributes, updated.Attributes)
+
+	// If no fields changed, nothing to update
+	if changedAttrs == nil {
+		return nil
+	}
+
+	// Build URL - use the project-scoped endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s",
+		s.project.client.baseURL,
+		url.PathEscape(s.project.projectID),
+		url.PathEscape(workItemID))
+
+	// Create update item with only changed attributes
+	updateItem := &WorkItem{
+		Type:       "workitems",
+		ID:         updated.ID,
+		Attributes: changedAttrs,
+	}
+
+	body := map[string]interface{}{
+		"data": updateItem,
+	}
+
+	// Make request with retry
+	err := s.project.client.retrier.Do(ctx, func() error {
+		resp, err := internalhttp.DoRequest(ctx, s.project.client.httpClient, "PATCH", urlStr, body)
+		if err != nil {
+			return err
+		}
+		// PATCH may return 204 No Content (empty body) or 200 OK with updated data
+		if resp.StatusCode == 204 {
+			resp.Body.Close()
+			return nil
+		}
+		// Update the item with the response if body is present
+		return internalhttp.DecodeDataResponse(resp, updated)
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to update work item %s: %w", updated.ID, err)
+	}
+
+	return nil
+}
+
+// compareAttributes compares two WorkItemAttributes and returns a new WorkItemAttributes
+// containing only the fields that have changed. Returns nil if no changes detected.
+func (s *WorkItemService) compareAttributes(current, updated *WorkItemAttributes) *WorkItemAttributes {
+	if current == nil || updated == nil {
+		return updated
+	}
+
+	changed := &WorkItemAttributes{
+		CustomFields: make(map[string]interface{}),
+	}
+	hasChanges := false
+
+	// Compare standard fields
+	if updated.Title != "" && updated.Title != current.Title {
+		changed.Title = updated.Title
+		hasChanges = true
+	}
+
+	if !areTextContentsEqual(current.Description, updated.Description) {
+		changed.Description = updated.Description
+		hasChanges = true
+	}
+
+	if updated.Status != "" && updated.Status != current.Status {
+		changed.Status = updated.Status
+		hasChanges = true
+	}
+
+	if updated.Resolution != "" && updated.Resolution != current.Resolution {
+		changed.Resolution = updated.Resolution
+		hasChanges = true
+	}
+
+	if updated.Priority != "" && updated.Priority != current.Priority {
+		changed.Priority = updated.Priority
+		hasChanges = true
+	}
+
+	if updated.Severity != "" && updated.Severity != current.Severity {
+		changed.Severity = updated.Severity
+		hasChanges = true
+	}
+
+	if updated.DueDate != "" && updated.DueDate != current.DueDate {
+		changed.DueDate = updated.DueDate
+		hasChanges = true
+	}
+
+	if !areTimesEqual(current.PlannedStart, updated.PlannedStart) {
+		changed.PlannedStart = updated.PlannedStart
+		hasChanges = true
+	}
+
+	if !areTimesEqual(current.PlannedEnd, updated.PlannedEnd) {
+		changed.PlannedEnd = updated.PlannedEnd
+		hasChanges = true
+	}
+
+	if updated.InitialEstimate != "" && updated.InitialEstimate != current.InitialEstimate {
+		changed.InitialEstimate = updated.InitialEstimate
+		hasChanges = true
+	}
+
+	if updated.RemainingEstimate != "" && updated.RemainingEstimate != current.RemainingEstimate {
+		changed.RemainingEstimate = updated.RemainingEstimate
+		hasChanges = true
+	}
+
+	if updated.TimeSpent != "" && updated.TimeSpent != current.TimeSpent {
+		changed.TimeSpent = updated.TimeSpent
+		hasChanges = true
+	}
+
+	if updated.OutlineNumber != "" && updated.OutlineNumber != current.OutlineNumber {
+		changed.OutlineNumber = updated.OutlineNumber
+		hasChanges = true
+	}
+
+	if !areHyperlinksEqual(current.Hyperlinks, updated.Hyperlinks) {
+		changed.Hyperlinks = updated.Hyperlinks
+		hasChanges = true
+	}
+
+	// Compare custom fields
+	for key, updatedValue := range updated.CustomFields {
+		currentValue, exists := current.CustomFields[key]
+		if !exists || !areCustomFieldValuesEqual(currentValue, updatedValue) {
+			changed.CustomFields[key] = updatedValue
+			hasChanges = true
+		}
+	}
+
+	// If no changes detected, return nil
+	if !hasChanges {
+		return nil
+	}
+
+	return changed
+}
+
+// areTextContentsEqual compares two TextContent pointers for equality.
+func areTextContentsEqual(a, b *TextContent) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Type == b.Type && a.Value == b.Value
+}
+
+// areTimesEqual compares two time.Time pointers for equality.
+func areTimesEqual(a, b *time.Time) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Equal(*b)
+}
+
+// areHyperlinksEqual compares two Hyperlink slices for equality.
+func areHyperlinksEqual(a, b []Hyperlink) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 {
+		return true
+	}
+
+	// Create a simple comparison - order matters
+	for i := range a {
+		if a[i].URI != b[i].URI || a[i].Role != b[i].Role {
+			return false
+		}
+	}
+	return true
+}
+
+// areCustomFieldValuesEqual compares two custom field values for equality.
+func areCustomFieldValuesEqual(a, b interface{}) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+
+	// Convert both to JSON for deep comparison
+	aJSON, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bJSON, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+
+	return string(aJSON) == string(bJSON)
 }
 
 // Delete deletes one or more work items by ID.
@@ -288,10 +566,17 @@ func (s *WorkItemService) Delete(ctx context.Context, ids ...string) error {
 
 	// Delete each work item
 	for _, id := range ids {
+		// Extract work item ID from full ID if needed (e.g., "test/TEST-122" -> "TEST-122")
+		workItemID := id
+		if strings.Contains(workItemID, "/") {
+			parts := strings.Split(workItemID, "/")
+			workItemID = parts[len(parts)-1]
+		}
+
 		urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s",
 			s.project.client.baseURL,
 			url.PathEscape(s.project.projectID),
-			url.PathEscape(id))
+			url.PathEscape(workItemID))
 
 		err := s.project.client.retrier.Do(ctx, func() error {
 			resp, err := internalhttp.DoRequest(ctx, s.project.client.httpClient, "DELETE", urlStr, nil)

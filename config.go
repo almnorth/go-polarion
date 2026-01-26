@@ -42,14 +42,7 @@ func defaultConfig() *Config {
 			MaxRetries: 1,
 			MinWait:    5 * time.Second,
 			MaxWait:    15 * time.Second,
-			RetryIf: func(err error) bool {
-				// Retry on network errors, not on 404
-				var apiErr *APIError
-				if AsAPIError(err, &apiErr) && apiErr.StatusCode == 404 {
-					return false
-				}
-				return true
-			},
+			RetryIf:    IsRetryable,
 		},
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
