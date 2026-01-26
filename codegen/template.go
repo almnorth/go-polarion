@@ -168,7 +168,7 @@ func (t *WorkItemTypeTemplate) writeLoadField(sb *strings.Builder, field FieldIn
 		sb.WriteString(fmt.Sprintf("\t\tw.%s = &val\n", field.GoName))
 		sb.WriteString("\t}\n\n")
 
-	case polarion.FieldKindFloat:
+	case polarion.FieldKindFloat, polarion.FieldKindCurrency:
 		sb.WriteString(fmt.Sprintf("\tif val, ok := cf.GetFloat(%q); ok {\n", field.ID))
 		sb.WriteString(fmt.Sprintf("\t\tw.%s = &val\n", field.GoName))
 		sb.WriteString("\t}\n\n")
@@ -198,9 +198,21 @@ func (t *WorkItemTypeTemplate) writeLoadField(sb *strings.Builder, field FieldIn
 		sb.WriteString(fmt.Sprintf("\t\tw.%s = &val\n", field.GoName))
 		sb.WriteString("\t}\n\n")
 
-	case polarion.FieldKindText, polarion.FieldKindTextHTML:
+	case polarion.FieldKindText, polarion.FieldKindTextHTML, polarion.FieldKindCode:
 		sb.WriteString(fmt.Sprintf("\tif val, ok := cf.GetText(%q); ok {\n", field.ID))
 		sb.WriteString(fmt.Sprintf("\t\tw.%s = val\n", field.GoName))
+		sb.WriteString("\t}\n\n")
+
+	case polarion.FieldKindTable:
+		// Table fields use GetTable accessor
+		sb.WriteString(fmt.Sprintf("\tif val, ok := cf.GetTable(%q); ok {\n", field.ID))
+		sb.WriteString(fmt.Sprintf("\t\tw.%s = val\n", field.GoName))
+		sb.WriteString("\t}\n\n")
+
+	case polarion.FieldKindStructure:
+		// Structure fields are stored as strings (JSON/XML)
+		sb.WriteString(fmt.Sprintf("\tif val, ok := cf.GetString(%q); ok {\n", field.ID))
+		sb.WriteString(fmt.Sprintf("\t\tw.%s = &val\n", field.GoName))
 		sb.WriteString("\t}\n\n")
 
 	default:
@@ -246,7 +258,10 @@ func (t *WorkItemTypeTemplate) writeSaveField(sb *strings.Builder, field FieldIn
 		sb.WriteString(fmt.Sprintf("\t\tcf.Set(%q, w.%s.String())\n", field.ID, field.GoName))
 	case polarion.FieldKindDuration:
 		sb.WriteString(fmt.Sprintf("\t\tcf.Set(%q, w.%s.String())\n", field.ID, field.GoName))
-	case polarion.FieldKindText, polarion.FieldKindTextHTML:
+	case polarion.FieldKindText, polarion.FieldKindTextHTML, polarion.FieldKindCode:
+		sb.WriteString(fmt.Sprintf("\t\tcf.Set(%q, w.%s)\n", field.ID, field.GoName))
+	case polarion.FieldKindTable:
+		// Table fields are saved as-is (the TableField struct handles serialization)
 		sb.WriteString(fmt.Sprintf("\t\tcf.Set(%q, w.%s)\n", field.ID, field.GoName))
 	default:
 		sb.WriteString(fmt.Sprintf("\t\tcf.Set(%q, *w.%s)\n", field.ID, field.GoName))
@@ -281,11 +296,11 @@ func (t *WorkItemTypeTemplate) writeGetter(sb *strings.Builder, field FieldInfo)
 
 	// Return zero value
 	switch field.Kind {
-	case polarion.FieldKindString, polarion.FieldKindEnumeration:
+	case polarion.FieldKindString, polarion.FieldKindEnumeration, polarion.FieldKindStructure:
 		sb.WriteString("\treturn \"\"\n")
 	case polarion.FieldKindInteger:
 		sb.WriteString("\treturn 0\n")
-	case polarion.FieldKindFloat:
+	case polarion.FieldKindFloat, polarion.FieldKindCurrency:
 		sb.WriteString("\treturn 0.0\n")
 	case polarion.FieldKindBoolean:
 		sb.WriteString("\treturn false\n")
@@ -297,8 +312,10 @@ func (t *WorkItemTypeTemplate) writeGetter(sb *strings.Builder, field FieldInfo)
 		sb.WriteString("\treturn polarion.DateTime{}\n")
 	case polarion.FieldKindDuration:
 		sb.WriteString("\treturn polarion.Duration{}\n")
-	case polarion.FieldKindText, polarion.FieldKindTextHTML:
+	case polarion.FieldKindText, polarion.FieldKindTextHTML, polarion.FieldKindCode:
 		sb.WriteString("\treturn polarion.TextContent{}\n")
+	case polarion.FieldKindTable:
+		sb.WriteString("\treturn polarion.TableField{}\n")
 	default:
 		sb.WriteString("\treturn \"\"\n")
 	}

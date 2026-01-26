@@ -3,6 +3,8 @@
 
 package polarion
 
+import "strconv"
+
 // CustomFields provides type-safe access to custom fields in WorkItemAttributes.
 // It wraps the map[string]interface{} to provide convenient accessor methods
 // that handle Polarion's data quirks (missing keys, type conversions).
@@ -82,8 +84,8 @@ func (cf CustomFields) GetInt(key string) (int, bool) {
 	}
 }
 
-// GetFloat safely retrieves a float custom field (kind: float).
-// Handles both float64 and int from JSON unmarshaling.
+// GetFloat safely retrieves a float custom field (kind: float, currency).
+// Handles float64, int, and string (for currency fields) from JSON unmarshaling.
 // Returns the value and true if the field exists and can be converted to float64, otherwise returns 0.0 and false.
 //
 // Example:
@@ -113,6 +115,12 @@ func (cf CustomFields) GetFloat(key string) (float64, bool) {
 		return float64(v), true
 	case int64:
 		return float64(v), true
+	case string:
+		// Handle currency fields which come as strings from Polarion API
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f, true
+		}
+		return 0.0, false
 	default:
 		return 0.0, false
 	}
@@ -288,6 +296,87 @@ func (cf CustomFields) GetDuration(key string) (Duration, bool) {
 	}
 
 	return d, true
+}
+
+// GetTable safely retrieves a table custom field (kind: table).
+// Handles map[string]interface{} from JSON unmarshaling and converts it to TableField.
+// Returns the value and true if the field exists and can be converted, otherwise returns nil and false.
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	if table, ok := cf.GetTable("dataTable"); ok {
+//	    headers := table.GetHeaders()
+//	    for i, row := range table.GetAllRowsAsMap() {
+//	        fmt.Printf("Row %d: %v\n", i, row)
+//	    }
+//	}
+func (cf CustomFields) GetTable(key string) (*TableField, bool) {
+	val, exists := cf[key]
+	if !exists {
+		return nil, false
+	}
+
+	// Handle nil value
+	if val == nil {
+		return nil, false
+	}
+
+	// Handle TableField object directly
+	if table, ok := val.(*TableField); ok {
+		return table, true
+	}
+
+	// Handle non-pointer TableField
+	if table, ok := val.(TableField); ok {
+		return &table, true
+	}
+
+	// Handle map from JSON unmarshaling
+	if m, ok := val.(map[string]interface{}); ok {
+		table := &TableField{}
+
+		// Extract keys
+		if keysRaw, ok := m["keys"].([]interface{}); ok {
+			table.Keys = make([]string, len(keysRaw))
+			for i, k := range keysRaw {
+				if str, ok := k.(string); ok {
+					table.Keys[i] = str
+				}
+			}
+		}
+
+		// Extract rows
+		if rowsRaw, ok := m["rows"].([]interface{}); ok {
+			table.Rows = make([]TableRow, len(rowsRaw))
+			for i, rowRaw := range rowsRaw {
+				if rowMap, ok := rowRaw.(map[string]interface{}); ok {
+					if valuesRaw, ok := rowMap["values"].([]interface{}); ok {
+						row := TableRow{
+							Values: make([]TextContent, len(valuesRaw)),
+						}
+						for j, cellRaw := range valuesRaw {
+							if cellMap, ok := cellRaw.(map[string]interface{}); ok {
+								cell := TextContent{}
+								if t, ok := cellMap["type"].(string); ok {
+									cell.Type = t
+								}
+								if v, ok := cellMap["value"].(string); ok {
+									cell.Value = v
+								}
+								row.Values[j] = cell
+							}
+						}
+						table.Rows[i] = row
+					}
+				}
+			}
+		}
+
+		return table, true
+	}
+
+	return nil, false
 }
 
 // GetEnum safely retrieves an enum custom field (kind: enumeration).

@@ -40,9 +40,11 @@ func (s *WorkItemService) Get(ctx context.Context, id string, opts ...GetOption)
 		opt(&options)
 	}
 
-	// Build URL
-	fullID := s.buildWorkItemID(id)
-	urlStr := fmt.Sprintf("%s/workitems/%s", s.project.client.baseURL, url.PathEscape(fullID))
+	// Build URL - use the project-scoped endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s",
+		s.project.client.baseURL,
+		url.PathEscape(s.project.projectID),
+		url.PathEscape(id))
 
 	// Add query parameters
 	params := url.Values{}
@@ -239,9 +241,18 @@ func (s *WorkItemService) Update(ctx context.Context, item *WorkItem) error {
 		return NewValidationError("ID", "work item ID is required for update")
 	}
 
-	// Build URL
-	fullID := s.buildWorkItemID(item.ID)
-	urlStr := fmt.Sprintf("%s/workitems/%s", s.project.client.baseURL, url.PathEscape(fullID))
+	// Extract work item ID from full ID if needed
+	workItemID := item.ID
+	if strings.Contains(workItemID, "/") {
+		parts := strings.Split(workItemID, "/")
+		workItemID = parts[len(parts)-1]
+	}
+
+	// Build URL - use the project-scoped endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s",
+		s.project.client.baseURL,
+		url.PathEscape(s.project.projectID),
+		url.PathEscape(workItemID))
 
 	// Prepare request body
 	body := map[string]interface{}{
@@ -277,8 +288,10 @@ func (s *WorkItemService) Delete(ctx context.Context, ids ...string) error {
 
 	// Delete each work item
 	for _, id := range ids {
-		fullID := s.buildWorkItemID(id)
-		urlStr := fmt.Sprintf("%s/workitems/%s", s.project.client.baseURL, url.PathEscape(fullID))
+		urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s",
+			s.project.client.baseURL,
+			url.PathEscape(s.project.projectID),
+			url.PathEscape(id))
 
 		err := s.project.client.retrier.Do(ctx, func() error {
 			resp, err := internalhttp.DoRequest(ctx, s.project.client.httpClient, "DELETE", urlStr, nil)
@@ -409,11 +422,11 @@ func (s *WorkItemService) createBatch(ctx context.Context, items []*WorkItem) er
 //
 //	relationships, err := project.WorkItems.GetRelationships(ctx, "WI-123", "linkedWorkItems")
 func (s *WorkItemService) GetRelationships(ctx context.Context, workItemID, relationshipID string) (interface{}, error) {
-	// Build URL
-	fullID := s.buildWorkItemID(workItemID)
-	urlStr := fmt.Sprintf("%s/workitems/%s/relationships/%s",
+	// Build URL - use the project-scoped endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/relationships/%s",
 		s.project.client.baseURL,
-		url.PathEscape(fullID),
+		url.PathEscape(s.project.projectID),
+		url.PathEscape(workItemID),
 		url.PathEscape(relationshipID))
 
 	// Make request with retry
@@ -446,11 +459,11 @@ func (s *WorkItemService) CreateRelationships(ctx context.Context, workItemID, r
 		return nil
 	}
 
-	// Build URL
-	fullID := s.buildWorkItemID(workItemID)
-	urlStr := fmt.Sprintf("%s/workitems/%s/relationships/%s",
+	// Build URL - use the project-scoped endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/relationships/%s",
 		s.project.client.baseURL,
-		url.PathEscape(fullID),
+		url.PathEscape(s.project.projectID),
+		url.PathEscape(workItemID),
 		url.PathEscape(relationshipID))
 
 	// Prepare request body
@@ -488,11 +501,11 @@ func (s *WorkItemService) UpdateRelationships(ctx context.Context, workItemID, r
 		return nil
 	}
 
-	// Build URL
-	fullID := s.buildWorkItemID(workItemID)
-	urlStr := fmt.Sprintf("%s/workitems/%s/relationships/%s",
+	// Build URL - use the project-scoped endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/relationships/%s",
 		s.project.client.baseURL,
-		url.PathEscape(fullID),
+		url.PathEscape(s.project.projectID),
+		url.PathEscape(workItemID),
 		url.PathEscape(relationshipID))
 
 	// Prepare request body
@@ -523,11 +536,11 @@ func (s *WorkItemService) UpdateRelationships(ctx context.Context, workItemID, r
 //
 //	err := project.WorkItems.DeleteRelationships(ctx, "WI-123", "linkedWorkItems")
 func (s *WorkItemService) DeleteRelationships(ctx context.Context, workItemID, relationshipID string) error {
-	// Build URL
-	fullID := s.buildWorkItemID(workItemID)
-	urlStr := fmt.Sprintf("%s/workitems/%s/relationships/%s",
+	// Build URL - use the project-scoped endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/relationships/%s",
 		s.project.client.baseURL,
-		url.PathEscape(fullID),
+		url.PathEscape(s.project.projectID),
+		url.PathEscape(workItemID),
 		url.PathEscape(relationshipID))
 
 	// Make request with retry
@@ -553,11 +566,11 @@ func (s *WorkItemService) DeleteRelationships(ctx context.Context, workItemID, r
 //
 //	actions, err := project.WorkItems.GetWorkflowActions(ctx, "WI-123")
 func (s *WorkItemService) GetWorkflowActions(ctx context.Context, workItemID string) ([]interface{}, error) {
-	// Build URL
-	fullID := s.buildWorkItemID(workItemID)
-	urlStr := fmt.Sprintf("%s/workitems/%s/actions",
+	// Build URL - use the project-scoped endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/actions",
 		s.project.client.baseURL,
-		url.PathEscape(fullID))
+		url.PathEscape(s.project.projectID),
+		url.PathEscape(workItemID))
 
 	// Make request with retry
 	var response struct {
@@ -585,13 +598,14 @@ func (s *WorkItemService) GetWorkflowActions(ctx context.Context, workItemID str
 //
 //	err := project.WorkItems.MoveToDocument(ctx, "WI-123", "DOC-456", 5)
 func (s *WorkItemService) MoveToDocument(ctx context.Context, workItemID, documentID string, position int) error {
-	// Build URL
-	fullID := s.buildWorkItemID(workItemID)
-	urlStr := fmt.Sprintf("%s/workitems/%s/actions/moveToDocument",
+	// Build URL - use the project-scoped endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/actions/moveToDocument",
 		s.project.client.baseURL,
-		url.PathEscape(fullID))
+		url.PathEscape(s.project.projectID),
+		url.PathEscape(workItemID))
 
 	// Prepare request body
+	fullID := s.buildWorkItemID(workItemID)
 	body := map[string]interface{}{
 		"data": map[string]interface{}{
 			"type": "workitems",
@@ -626,13 +640,14 @@ func (s *WorkItemService) MoveToDocument(ctx context.Context, workItemID, docume
 //
 //	err := project.WorkItems.MoveFromDocument(ctx, "WI-123")
 func (s *WorkItemService) MoveFromDocument(ctx context.Context, workItemID string) error {
-	// Build URL
-	fullID := s.buildWorkItemID(workItemID)
-	urlStr := fmt.Sprintf("%s/workitems/%s/actions/moveFromDocument",
+	// Build URL - use the project-scoped endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/actions/moveFromDocument",
 		s.project.client.baseURL,
-		url.PathEscape(fullID))
+		url.PathEscape(s.project.projectID),
+		url.PathEscape(workItemID))
 
 	// Prepare request body
+	fullID := s.buildWorkItemID(workItemID)
 	body := map[string]interface{}{
 		"data": map[string]interface{}{
 			"type": "workitems",

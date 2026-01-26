@@ -120,10 +120,11 @@ type queryOptions struct {
 }
 
 // defaultQueryOptions returns default query options.
+// By default, we request all fields to ensure custom fields are included.
 func defaultQueryOptions() queryOptions {
 	return queryOptions{
 		pageSize: 100,
-		fields:   FieldsDefault,
+		fields:   FieldsAll,
 	}
 }
 
@@ -172,9 +173,10 @@ type getOptions struct {
 }
 
 // defaultGetOptions returns default get options.
+// By default, we request all fields to ensure custom fields are included.
 func defaultGetOptions() getOptions {
 	return getOptions{
-		fields: FieldsDefault,
+		fields: FieldsAll,
 	}
 }
 

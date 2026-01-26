@@ -53,6 +53,18 @@ const (
 
 	// FieldKindRelationship represents a relationship to another work item or resource
 	FieldKindRelationship FieldKind = "relationship"
+
+	// FieldKindCode represents a code field with syntax highlighting
+	FieldKindCode FieldKind = "code"
+
+	// FieldKindStructure represents a structured data field (JSON/XML)
+	FieldKindStructure FieldKind = "structure"
+
+	// FieldKindCurrency represents a currency/monetary value field
+	FieldKindCurrency FieldKind = "currency"
+
+	// FieldKindTable !! NOT IN THE POLARION API (why?) !! WE JUST GUESS BASED ON THE STRUCURE IN GO. represents a table field with rows and columns
+	FieldKindTable FieldKind = "table"
 )
 
 // TimeOnly represents a Polarion time field (HH:MM:SS format).
@@ -435,5 +447,198 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 	}
 
 	*d = parsed
+	return nil
+}
+
+// TableField represents a Polarion table field.
+// Tables have column keys and rows of cells, where each cell contains typed content.
+//
+// Example structure:
+//
+//	{
+//	  "keys": ["Column1", "Column2"],
+//	  "rows": [
+//	    {"values": [{"type": "text/html", "value": "Cell 1"}, {"type": "text/html", "value": "Cell 2"}]},
+//	    {"values": [{"type": "text/html", "value": "Cell 3"}, {"type": "text/html", "value": "Cell 4"}]}
+//	  ]
+//	}
+type TableField struct {
+	// Keys are the column headers
+	Keys []string `json:"keys,omitempty"`
+
+	// Rows contains the table data
+	Rows []TableRow `json:"rows,omitempty"`
+}
+
+// TableRow represents a single row in a table field.
+type TableRow struct {
+	// Values contains the cell values for this row
+	Values []TextContent `json:"values,omitempty"`
+}
+
+// GetCell returns the cell value at the specified row and column index.
+// Returns an error if the indices are out of bounds.
+func (t *TableField) GetCell(row, col int) (*TextContent, error) {
+	if row < 0 || row >= len(t.Rows) {
+		return nil, fmt.Errorf("row index %d out of bounds (table has %d rows)", row, len(t.Rows))
+	}
+	if col < 0 || col >= len(t.Rows[row].Values) {
+		return nil, fmt.Errorf("column index %d out of bounds (row %d has %d columns)", col, row, len(t.Rows[row].Values))
+	}
+	return &t.Rows[row].Values[col], nil
+}
+
+// GetCellByKey returns the cell value at the specified row and column key.
+// Returns an error if the row index is out of bounds or the column key is not found.
+func (t *TableField) GetCellByKey(row int, key string) (*TextContent, error) {
+	if row < 0 || row >= len(t.Rows) {
+		return nil, fmt.Errorf("row index %d out of bounds (table has %d rows)", row, len(t.Rows))
+	}
+
+	// Find column index by key
+	colIndex := -1
+	for i, k := range t.Keys {
+		if k == key {
+			colIndex = i
+			break
+		}
+	}
+
+	if colIndex == -1 {
+		return nil, fmt.Errorf("column key %q not found in table", key)
+	}
+
+	return t.GetCell(row, colIndex)
+}
+
+// RowCount returns the number of rows in the table.
+func (t *TableField) RowCount() int {
+	return len(t.Rows)
+}
+
+// ColumnCount returns the number of columns in the table.
+func (t *TableField) ColumnCount() int {
+	return len(t.Keys)
+}
+
+// GetHeaders returns the column headers (keys) of the table.
+func (t *TableField) GetHeaders() []string {
+	return t.Keys
+}
+
+// GetRows returns all rows in the table.
+func (t *TableField) GetRows() []TableRow {
+	return t.Rows
+}
+
+// GetRow returns all cells in the specified row.
+// Returns an error if the row index is out of bounds.
+func (t *TableField) GetRow(row int) ([]TextContent, error) {
+	if row < 0 || row >= len(t.Rows) {
+		return nil, fmt.Errorf("row index %d out of bounds (table has %d rows)", row, len(t.Rows))
+	}
+	return t.Rows[row].Values, nil
+}
+
+// GetRowAsMap returns a row as a map with column names as keys.
+// This provides convenient access to cells by column name.
+// Returns an error if the row index is out of bounds.
+//
+// Example:
+//
+//	rowMap, err := table.GetRowAsMap(0)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	firstNameCell := rowMap["firstName"]
+//	fmt.Printf("First Name: %s\n", firstNameCell.Value)
+func (t *TableField) GetRowAsMap(row int) (map[string]TextContent, error) {
+	if row < 0 || row >= len(t.Rows) {
+		return nil, fmt.Errorf("row index %d out of bounds (table has %d rows)", row, len(t.Rows))
+	}
+
+	result := make(map[string]TextContent)
+	for i, key := range t.Keys {
+		if i < len(t.Rows[row].Values) {
+			result[key] = t.Rows[row].Values[i]
+		}
+	}
+	return result, nil
+}
+
+// GetAllRowsAsMap returns all rows as a slice of maps with column names as keys.
+// This provides convenient access to all table data with named columns.
+//
+// Example:
+//
+//	rows := table.GetAllRowsAsMap()
+//	for i, row := range rows {
+//	    fmt.Printf("Row %d - First Name: %s, Last Name: %s\n",
+//	        i, row["firstName"].Value, row["lastName"].Value)
+//	}
+func (t *TableField) GetAllRowsAsMap() []map[string]TextContent {
+	result := make([]map[string]TextContent, len(t.Rows))
+	for i := range t.Rows {
+		rowMap, _ := t.GetRowAsMap(i) // Error already checked in loop bounds
+		result[i] = rowMap
+	}
+	return result
+}
+
+// GetColumn returns all cells in the specified column by index.
+// Returns an error if the column index is out of bounds.
+func (t *TableField) GetColumn(col int) ([]TextContent, error) {
+	if col < 0 || col >= len(t.Keys) {
+		return nil, fmt.Errorf("column index %d out of bounds (table has %d columns)", col, len(t.Keys))
+	}
+
+	result := make([]TextContent, len(t.Rows))
+	for i, row := range t.Rows {
+		if col < len(row.Values) {
+			result[i] = row.Values[col]
+		}
+	}
+	return result, nil
+}
+
+// GetColumnByKey returns all cells in the specified column by key.
+// Returns an error if the column key is not found.
+func (t *TableField) GetColumnByKey(key string) ([]TextContent, error) {
+	// Find column index by key
+	colIndex := -1
+	for i, k := range t.Keys {
+		if k == key {
+			colIndex = i
+			break
+		}
+	}
+
+	if colIndex == -1 {
+		return nil, fmt.Errorf("column key %q not found in table", key)
+	}
+
+	return t.GetColumn(colIndex)
+}
+
+// AddRow adds a new row to the table.
+// The number of values must match the number of columns.
+func (t *TableField) AddRow(values []TextContent) error {
+	if len(values) != len(t.Keys) {
+		return fmt.Errorf("row has %d values but table has %d columns", len(values), len(t.Keys))
+	}
+	t.Rows = append(t.Rows, TableRow{Values: values})
+	return nil
+}
+
+// SetCell sets the value of a cell at the specified row and column index.
+// Returns an error if the indices are out of bounds.
+func (t *TableField) SetCell(row, col int, value TextContent) error {
+	if row < 0 || row >= len(t.Rows) {
+		return fmt.Errorf("row index %d out of bounds (table has %d rows)", row, len(t.Rows))
+	}
+	if col < 0 || col >= len(t.Rows[row].Values) {
+		return fmt.Errorf("column index %d out of bounds (row %d has %d columns)", col, row, len(t.Rows[row].Values))
+	}
+	t.Rows[row].Values[col] = value
 	return nil
 }

@@ -149,8 +149,14 @@ func (g *Generator) generateForType(ctx context.Context, project *polarion.Proje
 		return result, fmt.Errorf("failed to get fields metadata: %w", err)
 	}
 
+	// Get custom field definitions for this type (includes table column info)
+	customFieldDef, err := project.CustomFields.Get(ctx, "workitems", typeID)
+	if err != nil {
+		return result, fmt.Errorf("failed to get custom field definitions: %w", err)
+	}
+
 	// Discover custom fields
-	discoverer := NewDiscoverer(metadata)
+	discoverer := NewDiscoverer(metadata, customFieldDef)
 	fields := discoverer.DiscoverFields()
 	result.FieldCount = len(fields)
 

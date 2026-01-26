@@ -4,6 +4,7 @@
 package codegen
 
 import (
+	"fmt"
 	"strings"
 
 	polarion "github.com/almnorth/go-polarion"
@@ -37,17 +38,34 @@ type FieldInfo struct {
 
 	// IsRequired indicates if the field is required
 	IsRequired bool
+
+	// TableColumns contains the column definitions for table fields
+	TableColumns []TableColumn
+}
+
+// TableColumn represents a column definition for a table field
+type TableColumn struct {
+	// Key is the column key/identifier
+	Key string
+
+	// Name is the column name
+	Name string
+
+	// Title is the column title
+	Title string
 }
 
 // Discoverer discovers custom fields from metadata
 type Discoverer struct {
-	metadata *polarion.FieldsMetadata
+	metadata       *polarion.FieldsMetadata
+	customFieldDef *polarion.CustomFieldsConfig
 }
 
 // NewDiscoverer creates a new field discoverer
-func NewDiscoverer(metadata *polarion.FieldsMetadata) *Discoverer {
+func NewDiscoverer(metadata *polarion.FieldsMetadata, customFieldDef *polarion.CustomFieldsConfig) *Discoverer {
 	return &Discoverer{
-		metadata: metadata,
+		metadata:       metadata,
+		customFieldDef: customFieldDef,
 	}
 }
 
@@ -78,6 +96,11 @@ func (d *Discoverer) DiscoverFields() []FieldInfo {
 func (d *Discoverer) convertField(fieldID string, meta polarion.FieldMetadata) FieldInfo {
 	kind := polarion.FieldKind(meta.Type.Kind)
 
+	// Check if this is a table field (structure with structureName "Table")
+	if kind == polarion.FieldKindStructure && meta.Type.StructureName == "Table" {
+		kind = polarion.FieldKindTable
+	}
+
 	field := FieldInfo{
 		ID:          fieldID,
 		Name:        meta.Label,
@@ -89,6 +112,23 @@ func (d *Discoverer) convertField(fieldID string, meta polarion.FieldMetadata) F
 
 	// Map Polarion field kind to Go type
 	field.GoType = mapFieldKindToGoType(kind)
+
+	// If this is a table field, extract column definitions from custom field config
+	if kind == polarion.FieldKindTable && d.customFieldDef != nil {
+		for _, customField := range d.customFieldDef.Attributes.Fields {
+			if customField.ID == fieldID {
+				// Extract table columns from parameters
+				for _, param := range customField.Parameters {
+					field.TableColumns = append(field.TableColumns, TableColumn{
+						Key:   param.Key,
+						Name:  param.Name,
+						Title: param.Title,
+					})
+				}
+				break
+			}
+		}
+	}
 
 	return field
 }
@@ -118,7 +158,17 @@ func mapFieldKindToGoType(kind polarion.FieldKind) string {
 		return "*string" // Enums are represented as strings with validation
 	case polarion.FieldKindRelationship:
 		return "*string" // Relationships are represented as IDs
+	case polarion.FieldKindCode:
+		return "*polarion.TextContent" // Code fields are text with syntax highlighting
+	case polarion.FieldKindStructure:
+		return "*string" // Structure fields contain structured data (JSON/XML)
+	case polarion.FieldKindCurrency:
+		return "*float64" // Currency fields are numeric values
+	case polarion.FieldKindTable:
+		return "*polarion.TableField" // Table fields with rows and columns
 	default:
+		// Log warning for unknown field types
+		fmt.Printf("  ⚠ Warning: Unknown field kind '%s', defaulting to *string\n", kind)
 		return "*string" // Default to string for unknown types
 	}
 }

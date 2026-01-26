@@ -3,7 +3,10 @@
 
 package polarion
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // WorkItem represents a Polarion work item following the JSON:API format.
 // The structure matches the Polarion REST API response format where custom fields
@@ -36,6 +39,7 @@ type WorkItem struct {
 // Custom fields can be added by embedding this struct or using the CustomFields map.
 type WorkItemAttributes struct {
 	// Standard Polarion fields
+	Type              string       `json:"type,omitempty"`
 	Created           *time.Time   `json:"created,omitempty"`
 	Updated           *time.Time   `json:"updated,omitempty"`
 	Title             string       `json:"title,omitempty"`
@@ -185,4 +189,107 @@ func (a *WorkItemAttributes) HasCustomField(name string) bool {
 	}
 	_, exists := a.CustomFields[name]
 	return exists
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for WorkItemAttributes.
+// It unmarshals known standard fields and captures any remaining fields as custom fields.
+func (a *WorkItemAttributes) UnmarshalJSON(data []byte) error {
+	// Define a type alias to avoid infinite recursion
+	type Alias WorkItemAttributes
+
+	// First, unmarshal into a map to capture all fields
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	// Unmarshal into the alias to populate standard fields
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(a),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+
+	// Define the set of known standard fields
+	// These are the fields explicitly defined in WorkItemAttributes struct
+	knownFields := map[string]bool{
+		"id":                true, // ID field from work item level
+		"type":              true,
+		"created":           true,
+		"updated":           true,
+		"title":             true,
+		"description":       true,
+		"status":            true,
+		"resolution":        true,
+		"priority":          true,
+		"severity":          true,
+		"dueDate":           true,
+		"plannedStart":      true,
+		"plannedEnd":        true,
+		"initialEstimate":   true,
+		"remainingEstimate": true,
+		"timeSpent":         true,
+		"outlineNumber":     true,
+		"resolvedOn":        true,
+		"hyperlinks":        true,
+	}
+
+	// Initialize CustomFields map if needed
+	if a.CustomFields == nil {
+		a.CustomFields = make(map[string]interface{})
+	}
+
+	// Populate CustomFields with any fields not in the known set
+	for key, value := range raw {
+		if !knownFields[key] {
+			var v interface{}
+			if err := json.Unmarshal(value, &v); err != nil {
+				return err
+			}
+			a.CustomFields[key] = v
+		}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements custom JSON marshaling for WorkItemAttributes.
+// It marshals standard fields and merges in custom fields at the same level.
+func (a *WorkItemAttributes) MarshalJSON() ([]byte, error) {
+	// Define a type alias to avoid infinite recursion
+	type Alias WorkItemAttributes
+
+	// Marshal the standard fields
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(a),
+	}
+
+	data, err := json.Marshal(aux)
+	if err != nil {
+		return nil, err
+	}
+
+	// If there are no custom fields, return the standard fields
+	if len(a.CustomFields) == 0 {
+		return data, nil
+	}
+
+	// Unmarshal the standard fields into a map
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+
+	// Merge custom fields into the map
+	for key, value := range a.CustomFields {
+		result[key] = value
+	}
+
+	// Marshal the combined map
+	return json.Marshal(result)
 }

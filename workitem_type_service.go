@@ -6,8 +6,9 @@ package polarion
 import (
 	"context"
 	"fmt"
-	internalhttp "github.com/almnorth/go-polarion/internal/http"
 	"net/url"
+
+	internalhttp "github.com/almnorth/go-polarion/internal/http"
 )
 
 // WorkItemTypeService provides operations for work item type definitions.
@@ -67,49 +68,43 @@ func (s *WorkItemTypeService) Get(ctx context.Context, typeID string, opts ...Ge
 }
 
 // List retrieves all work item type definitions for the project.
+// This method uses the workitem-type enumeration to discover available types.
 //
 // Example:
 //
 //	types, err := project.WorkItemTypes.List(ctx)
 func (s *WorkItemTypeService) List(ctx context.Context, opts ...QueryOption) ([]WorkItemType, error) {
-	// Apply options
-	options := defaultQueryOptions()
-	for _, opt := range opts {
-		opt(&options)
-	}
-
-	// Build URL
-	urlStr := fmt.Sprintf("%s/projects/%s/types/workitems",
-		s.project.client.baseURL,
-		url.PathEscape(s.project.projectID))
-
-	// Build query parameters
-	params := url.Values{}
-	if options.fields != nil {
-		options.fields.ToQueryParams(params)
-	}
-	if len(params) > 0 {
-		urlStr += "?" + params.Encode()
-	}
-
-	// Make request with retry
-	var response struct {
-		Data []WorkItemType `json:"data"`
-	}
-
-	err := s.project.client.retrier.Do(ctx, func() error {
-		resp, err := internalhttp.DoRequest(ctx, s.project.client.httpClient, "GET", urlStr, nil)
-		if err != nil {
-			return err
-		}
-		return internalhttp.DecodeResponse(resp, &response)
-	})
-
+	// Get the workitem-type enumeration which contains all available work item types
+	// The enumeration context is "~" (general), name is "workitem-type", and targetType is "~" (no specific target)
+	// Note: We explicitly pass WithGetFields(nil) to avoid sending work item-specific fields that cause 406 errors
+	enum, err := s.project.Enumerations.Get(ctx, "~", "workitem-type", "~", WithGetFields(nil))
 	if err != nil {
-		return nil, fmt.Errorf("failed to list work item types: %w", err)
+		return nil, fmt.Errorf("failed to get work item type enumeration: %w", err)
 	}
 
-	return response.Data, nil
+	// Convert enumeration options to WorkItemType objects
+	if enum.Attributes == nil || len(enum.Attributes.Options) == 0 {
+		return []WorkItemType{}, nil
+	}
+
+	types := make([]WorkItemType, 0, len(enum.Attributes.Options))
+	for _, option := range enum.Attributes.Options {
+		wiType := WorkItemType{
+			Type: "workitem_types",
+			ID:   option.ID,
+		}
+
+		// Create attributes if we have additional information
+		if option.Name != "" {
+			wiType.Attributes = &WorkItemTypeAttributes{
+				Name: option.Name,
+			}
+		}
+
+		types = append(types, wiType)
+	}
+
+	return types, nil
 }
 
 // GetFields retrieves the field definitions for a specific work item type.

@@ -67,7 +67,7 @@ type CustomFieldDefinition struct {
 type CustomFieldType struct {
 	// Kind is the field type kind
 	// Possible values: "string", "text", "text/html", "integer", "float", "time", "date", "date-time",
-	// "duration", "boolean", "enumeration", "relationship"
+	// "duration", "boolean", "enumeration", "relationship", "structure"
 	Kind string `json:"kind"`
 
 	// EnumName is the enumeration name for enumeration fields
@@ -75,6 +75,9 @@ type CustomFieldType struct {
 
 	// EnumContext is the enumeration context for enumeration fields
 	EnumContext string `json:"enumContext,omitempty"`
+
+	// StructureName is the structure name for structure fields (e.g., "Table")
+	StructureName string `json:"structureName,omitempty"`
 
 	// TargetResourceTypes specifies allowed resource types for relationship fields
 	TargetResourceTypes []string `json:"targetResourceTypes,omitempty"`

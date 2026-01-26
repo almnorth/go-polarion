@@ -35,7 +35,7 @@ func NewClient(httpClient *http.Client, bearerToken string) Client {
 }
 
 // Do executes an HTTP request with authentication headers.
-// It adds the Bearer token and sets appropriate headers for JSON:API.
+// It adds the Bearer token and sets appropriate headers for JSON.
 func (c *client) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
 	// Clone request to avoid modifying the original
 	req = req.Clone(ctx)
@@ -43,9 +43,13 @@ func (c *client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 	// Add authentication header
 	req.Header.Set("Authorization", "Bearer "+c.bearerToken)
 
-	// Set JSON:API headers
-	req.Header.Set("Content-Type", "application/vnd.api+json")
-	req.Header.Set("Accept", "application/vnd.api+json")
+	// Set JSON headers if not already set
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if req.Header.Get("Accept") == "" {
+		req.Header.Set("Accept", "application/json")
+	}
 
 	// Execute request
 	resp, err := c.httpClient.Do(req)
@@ -125,12 +129,19 @@ func newAPIError(statusCode int, message string, resp *http.Response) *APIError 
 
 // Error implements the error interface.
 func (e *APIError) Error() string {
-	if len(e.Details) > 0 {
-		return fmt.Sprintf("polarion api error (status %d): %s - %v",
-			e.StatusCode, e.Message, e.Details)
+	method := ""
+	url := ""
+	if e.Response != nil && e.Response.Request != nil {
+		method = e.Response.Request.Method
+		url = e.Response.Request.URL.String()
 	}
-	return fmt.Sprintf("polarion api error (status %d): %s",
-		e.StatusCode, e.Message)
+
+	if len(e.Details) > 0 {
+		return fmt.Sprintf("polarion api error (status %d) for %s %s: %s - %v",
+			e.StatusCode, method, url, e.Message, e.Details)
+	}
+	return fmt.Sprintf("polarion api error (status %d) for %s %s: %s",
+		e.StatusCode, method, url, e.Message)
 }
 
 // DoRequest is a helper function to make HTTP requests with JSON encoding/decoding.
@@ -148,6 +159,29 @@ func DoRequest(ctx context.Context, client Client, method, url string, body inte
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+
+	return client.Do(ctx, req)
+}
+
+// DoRequestWithAccept is a helper function to make HTTP requests with a custom Accept header.
+// This is useful for endpoints that don't support JSON:API format (e.g., enumerations).
+func DoRequestWithAccept(ctx context.Context, client Client, method, url, acceptHeader string, body interface{}) (*http.Response, error) {
+	var reqBody io.Reader
+	if body != nil {
+		jsonData, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		reqBody = bytes.NewReader(jsonData)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set custom Accept header
+	req.Header.Set("Accept", acceptHeader)
 
 	return client.Do(ctx, req)
 }
