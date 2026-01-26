@@ -1,0 +1,187 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Polarion Client Contributors
+
+package codegen
+
+import (
+	"strings"
+
+	polarion "github.com/almnorth/go-polarion"
+)
+
+// FieldInfo represents discovered field information
+type FieldInfo struct {
+	// ID is the field identifier (e.g., "businessValue")
+	ID string
+
+	// Name is the human-readable field name (e.g., "Business Value")
+	Name string
+
+	// GoName is the Go struct field name (e.g., "BusinessValue")
+	GoName string
+
+	// GoType is the Go type for this field (e.g., "*string", "*polarion.DateOnly")
+	GoType string
+
+	// Kind is the Polarion field kind
+	Kind polarion.FieldKind
+
+	// Description is the field description for documentation
+	Description string
+
+	// EnumName is the enumeration name for enum fields
+	EnumName string
+
+	// EnumValues are the valid values for enum fields (if available)
+	EnumValues []string
+
+	// IsRequired indicates if the field is required
+	IsRequired bool
+}
+
+// Discoverer discovers custom fields from metadata
+type Discoverer struct {
+	metadata *polarion.FieldsMetadata
+}
+
+// NewDiscoverer creates a new field discoverer
+func NewDiscoverer(metadata *polarion.FieldsMetadata) *Discoverer {
+	return &Discoverer{
+		metadata: metadata,
+	}
+}
+
+// DiscoverFields discovers all custom fields from the metadata
+func (d *Discoverer) DiscoverFields() []FieldInfo {
+	var fields []FieldInfo
+
+	// Process attribute fields (primitive types)
+	if d.metadata.Data.Attributes != nil {
+		for fieldID, fieldMeta := range d.metadata.Data.Attributes {
+			// Skip standard fields (we only want custom fields)
+			if isStandardField(fieldID) {
+				continue
+			}
+
+			field := d.convertField(fieldID, fieldMeta)
+			fields = append(fields, field)
+		}
+	}
+
+	// Note: We skip relationship fields for now as they require more complex handling
+	// They could be added in a future enhancement
+
+	return fields
+}
+
+// convertField converts a FieldMetadata to FieldInfo
+func (d *Discoverer) convertField(fieldID string, meta polarion.FieldMetadata) FieldInfo {
+	kind := polarion.FieldKind(meta.Type.Kind)
+
+	field := FieldInfo{
+		ID:          fieldID,
+		Name:        meta.Label,
+		GoName:      toGoFieldName(fieldID),
+		Kind:        kind,
+		Description: meta.Label,
+		EnumName:    meta.Type.EnumName,
+	}
+
+	// Map Polarion field kind to Go type
+	field.GoType = mapFieldKindToGoType(kind)
+
+	return field
+}
+
+// mapFieldKindToGoType maps a Polarion field kind to a Go type
+func mapFieldKindToGoType(kind polarion.FieldKind) string {
+	switch kind {
+	case polarion.FieldKindString:
+		return "*string"
+	case polarion.FieldKindText, polarion.FieldKindTextHTML:
+		return "*polarion.TextContent"
+	case polarion.FieldKindInteger:
+		return "*int"
+	case polarion.FieldKindFloat:
+		return "*float64"
+	case polarion.FieldKindTime:
+		return "*polarion.TimeOnly"
+	case polarion.FieldKindDate:
+		return "*polarion.DateOnly"
+	case polarion.FieldKindDateTime:
+		return "*polarion.DateTime"
+	case polarion.FieldKindDuration:
+		return "*polarion.Duration"
+	case polarion.FieldKindBoolean:
+		return "*bool"
+	case polarion.FieldKindEnumeration:
+		return "*string" // Enums are represented as strings with validation
+	case polarion.FieldKindRelationship:
+		return "*string" // Relationships are represented as IDs
+	default:
+		return "*string" // Default to string for unknown types
+	}
+}
+
+// toGoFieldName converts a field ID to a Go field name
+// Examples: "businessValue" -> "BusinessValue", "target_release" -> "TargetRelease"
+func toGoFieldName(fieldID string) string {
+	// Replace underscores and hyphens with spaces
+	s := strings.ReplaceAll(fieldID, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+
+	// Title case each word
+	words := strings.Fields(s)
+	for i, word := range words {
+		if len(word) > 0 {
+			// Handle camelCase: split on uppercase letters
+			if i == 0 && strings.ToLower(word) != word {
+				// First word might be camelCase
+				words[i] = strings.ToUpper(word[:1]) + word[1:]
+			} else {
+				words[i] = strings.ToUpper(word[:1]) + strings.ToLower(word[1:])
+			}
+		}
+	}
+
+	// Join without spaces
+	result := strings.Join(words, "")
+
+	// Handle camelCase input (e.g., "businessValue" -> "BusinessValue")
+	if len(result) > 0 && result[0] >= 'a' && result[0] <= 'z' {
+		result = strings.ToUpper(result[:1]) + result[1:]
+	}
+
+	return result
+}
+
+// isStandardField checks if a field is a standard Polarion field
+// Standard fields are already part of the WorkItem struct
+func isStandardField(fieldID string) bool {
+	standardFields := map[string]bool{
+		"id":                true,
+		"title":             true,
+		"type":              true,
+		"status":            true,
+		"priority":          true,
+		"severity":          true,
+		"author":            true,
+		"created":           true,
+		"updated":           true,
+		"assignee":          true,
+		"description":       true,
+		"dueDate":           true,
+		"plannedStart":      true,
+		"plannedEnd":        true,
+		"timePoint":         true,
+		"initialEstimate":   true,
+		"remainingEstimate": true,
+		"timeSpent":         true,
+		"resolution":        true,
+		"approvalStatus":    true,
+		"outlineNumber":     true,
+		"project":           true,
+	}
+
+	return standardFields[fieldID]
+}
