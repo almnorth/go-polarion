@@ -6,9 +6,10 @@ package polarion
 import (
 	"context"
 	"fmt"
-	internalhttp "github.com/almnorth/go-polarion/internal/http"
 	"net/url"
 	"strings"
+
+	internalhttp "github.com/almnorth/go-polarion/internal/http"
 )
 
 // WorkItemLinkService provides operations for work item links.
@@ -77,14 +78,14 @@ func (s *WorkItemLinkService) List(ctx context.Context, workItemID string, opts 
 		opt(&options)
 	}
 
-	// Build work item ID with project prefix if needed
-	fullWorkItemID := s.buildWorkItemID(workItemID)
+	// Extract work item ID from full ID if needed (e.g., "OP869335/OP869335-34496" -> "OP869335-34496")
+	cleanWorkItemID := extractWorkItemID(workItemID)
 
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/linkedworkitems",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(fullWorkItemID))
+		url.PathEscape(cleanWorkItemID))
 
 	// Build query parameters
 	params := url.Values{}
@@ -118,13 +119,26 @@ func (s *WorkItemLinkService) List(ctx context.Context, workItemID string, opts 
 // Create creates one or more work item links.
 // All links must have the same primary work item ID.
 //
-// Example:
+// Example using the helper function:
+//
+//	link := polarion.NewWorkItemLink("relates_to", "MyProject/WI-456", "", false)
+//	err := project.WorkItemLinks.Create(ctx, "WI-123", link)
+//
+// Example with manual construction:
 //
 //	link := &polarion.WorkItemLink{
 //	    Type: "linkedworkitems",
 //	    Data: &polarion.WorkItemLinkAttributes{
 //	        Role:    "relates_to",
 //	        Suspect: false,
+//	    },
+//	    Relationships: &polarion.LinkedWorkItemRelationships{
+//	        WorkItem: &polarion.Relationship{
+//	            Data: map[string]interface{}{
+//	                "type": "workitems",
+//	                "id":   "MyProject/WI-456",
+//	            },
+//	        },
 //	    },
 //	}
 //	err := project.WorkItemLinks.Create(ctx, "WI-123", link)
@@ -140,18 +154,43 @@ func (s *WorkItemLinkService) Create(ctx context.Context, primaryWorkItemID stri
 		}
 	}
 
-	// Build work item ID with project prefix if needed
-	fullWorkItemID := s.buildWorkItemID(primaryWorkItemID)
+	// Extract work item ID from full ID if needed (e.g., "OP869335/OP869335-34496" -> "OP869335-34496")
+	cleanWorkItemID := extractWorkItemID(primaryWorkItemID)
 
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/linkedworkitems",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(fullWorkItemID))
+		url.PathEscape(cleanWorkItemID))
+
+	// Prepare request body - ensure relationships are properly set
+	// If the link doesn't have relationships set, we need to construct them from the old fields
+	requestData := make([]interface{}, len(links))
+	for i, link := range links {
+		linkData := map[string]interface{}{
+			"type": link.Type,
+			"attributes": map[string]interface{}{
+				"role":    link.Data.Role,
+				"suspect": link.Data.Suspect,
+			},
+		}
+
+		// Add revision if present
+		if link.Data.Revision != "" {
+			linkData["attributes"].(map[string]interface{})["revision"] = link.Data.Revision
+		}
+
+		// Add relationships if present
+		if link.Relationships != nil && link.Relationships.WorkItem != nil {
+			linkData["relationships"] = link.Relationships
+		}
+
+		requestData[i] = linkData
+	}
 
 	// Prepare request body
 	body := map[string]interface{}{
-		"data": links,
+		"data": requestData,
 	}
 
 	// Make request with retry
@@ -254,11 +293,14 @@ func (s *WorkItemLinkService) Delete(ctx context.Context, linkIDs ...string) err
 
 // deleteBatch deletes a batch of links for a specific work item.
 func (s *WorkItemLinkService) deleteBatch(ctx context.Context, primaryWorkItemID string, linkIDs []string) error {
+	// Extract work item ID from full ID if needed (e.g., "OP869335/OP869335-34496" -> "OP869335-34496")
+	cleanWorkItemID := extractWorkItemID(primaryWorkItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/linkedworkitems",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(primaryWorkItemID))
+		url.PathEscape(cleanWorkItemID))
 
 	// Prepare request body with link IDs
 	linkData := make([]map[string]interface{}, len(linkIDs))
@@ -313,6 +355,7 @@ func (s *WorkItemLinkService) validateLink(link *WorkItemLink) error {
 }
 
 // buildWorkItemID builds a full work item ID with project prefix if needed.
+// This is used for building request bodies, not URLs.
 func (s *WorkItemLinkService) buildWorkItemID(id string) string {
 	// If ID already contains project prefix, return as-is
 	if strings.Contains(id, "/") {

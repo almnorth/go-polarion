@@ -36,11 +36,14 @@ func (s *WorkItemWorkRecordService) Get(ctx context.Context, workItemID, recordI
 		opt(&options)
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/workrecords/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(recordID))
 
 	// Add query parameters
@@ -85,11 +88,14 @@ func (s *WorkItemWorkRecordService) List(ctx context.Context, workItemID string,
 		opt(&options)
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/workrecords",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID))
+		url.PathEscape(cleanWorkItemID))
 
 	// Build query parameters
 	params := url.Values{}
@@ -162,11 +168,14 @@ func (s *WorkItemWorkRecordService) Create(ctx context.Context, workItemID strin
 		}
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/workrecords",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID))
+		url.PathEscape(cleanWorkItemID))
 
 	// Prepare request body
 	data := make([]map[string]interface{}, len(requests))
@@ -227,12 +236,15 @@ func (s *WorkItemWorkRecordService) Delete(ctx context.Context, workItemID strin
 		return nil
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Delete each work record
 	for _, recordID := range recordIDs {
 		urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/workrecords/%s",
 			s.project.client.baseURL,
 			url.PathEscape(s.project.projectID),
-			url.PathEscape(workItemID),
+			url.PathEscape(cleanWorkItemID),
 			url.PathEscape(recordID))
 
 		err := s.project.client.retrier.Do(ctx, func() error {

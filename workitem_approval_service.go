@@ -36,11 +36,14 @@ func (s *WorkItemApprovalService) Get(ctx context.Context, workItemID, userID st
 		opt(&options)
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/approvals/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(userID))
 
 	// Add query parameters
@@ -85,11 +88,14 @@ func (s *WorkItemApprovalService) List(ctx context.Context, workItemID string, o
 		opt(&options)
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/approvals",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID))
+		url.PathEscape(cleanWorkItemID))
 
 	// Build query parameters
 	params := url.Values{}
@@ -161,11 +167,14 @@ func (s *WorkItemApprovalService) Create(ctx context.Context, workItemID string,
 		}
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/approvals",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID))
+		url.PathEscape(cleanWorkItemID))
 
 	// Prepare request body
 	data := make([]map[string]interface{}, len(requests))
@@ -228,11 +237,14 @@ func (s *WorkItemApprovalService) Update(ctx context.Context, workItemID string,
 		return NewValidationError("userID", "user ID is required")
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/approvals/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(request.UserID))
 
 	// Prepare request body
@@ -246,7 +258,7 @@ func (s *WorkItemApprovalService) Update(ctx context.Context, workItemID string,
 	body := map[string]interface{}{
 		"data": map[string]interface{}{
 			"type":       "workitem_approvals",
-			"id":         fmt.Sprintf("%s/%s/%s", s.project.projectID, workItemID, request.UserID),
+			"id":         fmt.Sprintf("%s/%s/%s", s.project.projectID, cleanWorkItemID, request.UserID),
 			"attributes": attributes,
 		},
 	}
@@ -292,11 +304,14 @@ func (s *WorkItemApprovalService) UpdateBatch(ctx context.Context, workItemID st
 		}
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/approvals",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID))
+		url.PathEscape(cleanWorkItemID))
 
 	// Prepare request body
 	data := make([]map[string]interface{}, len(requests))
@@ -310,7 +325,7 @@ func (s *WorkItemApprovalService) UpdateBatch(ctx context.Context, workItemID st
 
 		data[i] = map[string]interface{}{
 			"type":       "workitem_approvals",
-			"id":         fmt.Sprintf("%s/%s/%s", s.project.projectID, workItemID, req.UserID),
+			"id":         fmt.Sprintf("%s/%s/%s", s.project.projectID, cleanWorkItemID, req.UserID),
 			"attributes": attributes,
 		}
 	}
@@ -346,12 +361,15 @@ func (s *WorkItemApprovalService) Delete(ctx context.Context, workItemID string,
 		return nil
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Delete each approval
 	for _, userID := range userIDs {
 		urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/approvals/%s",
 			s.project.client.baseURL,
 			url.PathEscape(s.project.projectID),
-			url.PathEscape(workItemID),
+			url.PathEscape(cleanWorkItemID),
 			url.PathEscape(userID))
 
 		err := s.project.client.retrier.Do(ctx, func() error {

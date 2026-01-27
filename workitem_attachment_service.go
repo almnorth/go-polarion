@@ -37,11 +37,14 @@ func (s *WorkItemAttachmentService) Get(ctx context.Context, workItemID, attachm
 		opt(&options)
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/attachments/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(attachmentID))
 
 	// Add query parameters
@@ -86,11 +89,14 @@ func (s *WorkItemAttachmentService) List(ctx context.Context, workItemID string,
 		opt(&options)
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/attachments",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID))
+		url.PathEscape(cleanWorkItemID))
 
 	// Build query parameters
 	params := url.Values{}
@@ -156,11 +162,14 @@ func (s *WorkItemAttachmentService) List(ctx context.Context, workItemID string,
 //	defer content.Close()
 //	data, err := io.ReadAll(content)
 func (s *WorkItemAttachmentService) GetContent(ctx context.Context, workItemID, attachmentID string) (io.ReadCloser, error) {
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/attachments/%s/content",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(attachmentID))
 
 	// Make request with retry
@@ -200,11 +209,14 @@ func (s *WorkItemAttachmentService) Create(ctx context.Context, workItemID strin
 		}
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/attachments",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID))
+		url.PathEscape(cleanWorkItemID))
 
 	// Create multipart request
 	err := s.project.client.retrier.Do(ctx, func() error {
@@ -241,11 +253,14 @@ func (s *WorkItemAttachmentService) Update(ctx context.Context, workItemID strin
 		return NewValidationError("attachmentID", "attachment ID is required")
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/attachments/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(request.AttachmentID))
 
 	// Make request with retry
@@ -275,12 +290,15 @@ func (s *WorkItemAttachmentService) Delete(ctx context.Context, workItemID strin
 		return nil
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Delete each attachment
 	for _, attachmentID := range attachmentIDs {
 		urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/attachments/%s",
 			s.project.client.baseURL,
 			url.PathEscape(s.project.projectID),
-			url.PathEscape(workItemID),
+			url.PathEscape(cleanWorkItemID),
 			url.PathEscape(attachmentID))
 
 		err := s.project.client.retrier.Do(ctx, func() error {

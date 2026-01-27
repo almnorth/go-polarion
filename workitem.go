@@ -127,19 +127,18 @@ type WorkItemMeta struct {
 
 // WorkItemLink represents a link between two work items.
 type WorkItemLink struct {
-	Type  string                  `json:"type,omitempty"`
-	ID    string                  `json:"id,omitempty"`
-	Data  *WorkItemLinkAttributes `json:"attributes,omitempty"`
-	Links *WorkItemLinks          `json:"links,omitempty"`
+	Type          string                       `json:"type,omitempty"`
+	ID            string                       `json:"id,omitempty"`
+	Data          *WorkItemLinkAttributes      `json:"attributes,omitempty"`
+	Relationships *LinkedWorkItemRelationships `json:"relationships,omitempty"`
+	Links         *WorkItemLinks               `json:"links,omitempty"`
 }
 
 // WorkItemLinkAttributes contains attributes of a work item link.
 type WorkItemLinkAttributes struct {
-	Role                string `json:"role,omitempty"`
-	Suspect             bool   `json:"suspect,omitempty"`
-	SecondaryWorkItemID string `json:"secondaryWorkItemId,omitempty"`
-	SecondaryProjectID  string `json:"secondaryProjectId,omitempty"`
-	SecondaryRevision   string `json:"secondaryRevision,omitempty"`
+	Role     string `json:"role,omitempty"`
+	Suspect  bool   `json:"suspect,omitempty"`
+	Revision string `json:"revision,omitempty"`
 }
 
 // NewTextContent creates a new TextContent with the specified type and value.
@@ -292,4 +291,62 @@ func (a *WorkItemAttributes) MarshalJSON() ([]byte, error) {
 
 	// Marshal the combined map
 	return json.Marshal(result)
+}
+
+// Clone creates a deep copy of a WorkItem.
+// This is useful when you need to modify a work item without affecting the original.
+func (w *WorkItem) Clone() *WorkItem {
+	if w == nil {
+		return nil
+	}
+
+	clone := &WorkItem{
+		Type:     w.Type,
+		ID:       w.ID,
+		Revision: w.Revision,
+	}
+
+	// Clone attributes
+	if w.Attributes != nil {
+		clone.Attributes = &WorkItemAttributes{
+			Type:              w.Attributes.Type,
+			Created:           w.Attributes.Created,
+			Updated:           w.Attributes.Updated,
+			Title:             w.Attributes.Title,
+			Status:            w.Attributes.Status,
+			Resolution:        w.Attributes.Resolution,
+			Priority:          w.Attributes.Priority,
+			Severity:          w.Attributes.Severity,
+			DueDate:           w.Attributes.DueDate,
+			PlannedStart:      w.Attributes.PlannedStart,
+			PlannedEnd:        w.Attributes.PlannedEnd,
+			InitialEstimate:   w.Attributes.InitialEstimate,
+			RemainingEstimate: w.Attributes.RemainingEstimate,
+			TimeSpent:         w.Attributes.TimeSpent,
+			OutlineNumber:     w.Attributes.OutlineNumber,
+			ResolvedOn:        w.Attributes.ResolvedOn,
+			CustomFields:      make(map[string]interface{}),
+		}
+
+		// Clone description
+		if w.Attributes.Description != nil {
+			clone.Attributes.Description = &TextContent{
+				Type:  w.Attributes.Description.Type,
+				Value: w.Attributes.Description.Value,
+			}
+		}
+
+		// Clone hyperlinks
+		if len(w.Attributes.Hyperlinks) > 0 {
+			clone.Attributes.Hyperlinks = make([]Hyperlink, len(w.Attributes.Hyperlinks))
+			copy(clone.Attributes.Hyperlinks, w.Attributes.Hyperlinks)
+		}
+
+		// Deep copy custom fields
+		for k, v := range w.Attributes.CustomFields {
+			clone.Attributes.CustomFields[k] = v
+		}
+	}
+
+	return clone
 }

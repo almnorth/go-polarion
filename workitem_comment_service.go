@@ -6,9 +6,10 @@ package polarion
 import (
 	"context"
 	"fmt"
-	internalhttp "github.com/almnorth/go-polarion/internal/http"
 	"net/url"
 	"strconv"
+
+	internalhttp "github.com/almnorth/go-polarion/internal/http"
 )
 
 // WorkItemCommentService provides operations for managing work item comments.
@@ -43,11 +44,14 @@ func (s *WorkItemCommentService) Get(ctx context.Context, workItemID, commentID 
 		opt(&options)
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/comments/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(commentID))
 
 	// Add query parameters
@@ -96,6 +100,9 @@ func (s *WorkItemCommentService) List(ctx context.Context, workItemID string, op
 		opt(&options)
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	var allComments []*WorkItemComment
 	pageNum := 1
 
@@ -104,7 +111,7 @@ func (s *WorkItemCommentService) List(ctx context.Context, workItemID string, op
 		urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/comments",
 			s.project.client.baseURL,
 			url.PathEscape(s.project.projectID),
-			url.PathEscape(workItemID))
+			url.PathEscape(cleanWorkItemID))
 
 		// Build query parameters
 		params := url.Values{}
@@ -184,6 +191,9 @@ func (s *WorkItemCommentService) Create(ctx context.Context, workItemID string, 
 		return nil, fmt.Errorf("at least one comment must be provided")
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Prepare request body
 	body := map[string]interface{}{
 		"data": comments,
@@ -193,7 +203,7 @@ func (s *WorkItemCommentService) Create(ctx context.Context, workItemID string, 
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/comments",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID))
+		url.PathEscape(cleanWorkItemID))
 
 	// Make request with retry
 	var response struct {
@@ -238,6 +248,9 @@ func (s *WorkItemCommentService) Update(ctx context.Context, workItemID string, 
 		return fmt.Errorf("comment ID cannot be empty")
 	}
 
+	// Extract work item ID from full ID if needed
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Prepare request body
 	body := map[string]interface{}{
 		"data": comment,
@@ -247,7 +260,7 @@ func (s *WorkItemCommentService) Update(ctx context.Context, workItemID string, 
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/comments/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(comment.ID))
 
 	// Make request with retry

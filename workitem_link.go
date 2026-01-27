@@ -3,6 +3,8 @@
 
 package polarion
 
+import "strings"
+
 // Note: WorkItemLink and WorkItemLinkAttributes are defined in workitem.go
 // This file contains additional types and helpers for the work item link service.
 
@@ -87,4 +89,82 @@ func ParseLinkID(linkID string) (projectID, primaryWorkItemID, role, secondaryPr
 // BuildLinkID constructs a work item link ID from its components.
 func BuildLinkID(projectID, primaryWorkItemID, role, secondaryProjectID, secondaryWorkItemID string) string {
 	return projectID + "/" + primaryWorkItemID + "/" + role + "/" + secondaryProjectID + "/" + secondaryWorkItemID
+}
+
+// NewWorkItemLink creates a new work item link with the specified parameters.
+// The secondaryWorkItemID should be the full ID including project (e.g., "PROJECT/WI-123").
+// If secondaryProjectID is empty, it defaults to the current project.
+func NewWorkItemLink(role, secondaryWorkItemID, secondaryProjectID string, suspect bool) *WorkItemLink {
+	return &WorkItemLink{
+		Type: "linkedworkitems",
+		Data: &WorkItemLinkAttributes{
+			Role:    role,
+			Suspect: suspect,
+		},
+		Relationships: &LinkedWorkItemRelationships{
+			WorkItem: &Relationship{
+				Data: map[string]interface{}{
+					"type": "workitems",
+					"id":   secondaryWorkItemID,
+				},
+			},
+		},
+	}
+}
+
+// GetSecondaryWorkItemID extracts the secondary work item ID from the link.
+// Returns the full ID (e.g., "PROJECT/WI-123") from either the relationships or by parsing the link ID.
+func (l *WorkItemLink) GetSecondaryWorkItemID() string {
+	// Try to get from relationships first
+	if l.Relationships != nil && l.Relationships.WorkItem != nil {
+		if data, ok := l.Relationships.WorkItem.Data.(map[string]interface{}); ok {
+			if id, ok := data["id"].(string); ok {
+				return id
+			}
+		}
+	}
+
+	// Fall back to parsing the link ID
+	// Format: "project/primary/role/project/secondary"
+	if l.ID != "" {
+		parts := strings.Split(l.ID, "/")
+		if len(parts) == 5 {
+			return parts[3] + "/" + parts[4] // Full ID with project
+		}
+	}
+
+	return ""
+}
+
+// GetSecondaryWorkItemIDShort extracts just the work item ID without the project prefix.
+// Returns just the ID part (e.g., "WI-123") from "PROJECT/WI-123".
+func (l *WorkItemLink) GetSecondaryWorkItemIDShort() string {
+	fullID := l.GetSecondaryWorkItemID()
+	if fullID == "" {
+		return ""
+	}
+
+	// Extract just the work item ID part
+	parts := strings.Split(fullID, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+
+	return fullID
+}
+
+// GetSecondaryProjectID extracts the secondary project ID from the link.
+func (l *WorkItemLink) GetSecondaryProjectID() string {
+	fullID := l.GetSecondaryWorkItemID()
+	if fullID == "" {
+		return ""
+	}
+
+	// Extract project ID from full ID
+	parts := strings.Split(fullID, "/")
+	if len(parts) >= 2 {
+		return parts[0]
+	}
+
+	return ""
 }

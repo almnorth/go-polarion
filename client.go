@@ -133,3 +133,14 @@ func (c *Client) BaseURL() string {
 func (c *Client) Config() *Config {
 	return c.config
 }
+
+// extractWorkItemID extracts the work item ID from a full ID that may contain a project prefix.
+// For example, "OP869335/OP869335-34496" becomes "OP869335-34496".
+// If the ID doesn't contain a slash, it returns the ID as-is.
+func extractWorkItemID(id string) string {
+	if strings.Contains(id, "/") {
+		parts := strings.Split(id, "/")
+		return parts[len(parts)-1]
+	}
+	return id
+}
