@@ -25,7 +25,7 @@ type ProjectAttributes struct {
 	Name string `json:"name,omitempty"`
 
 	// Description provides details about the project
-	Description string `json:"description,omitempty"`
+	Description *TextContent `json:"description,omitempty"`
 
 	// Active indicates if the project is active
 	Active bool `json:"active,omitempty"`
@@ -56,6 +56,14 @@ type CreateProjectRequest struct {
 
 	// Name is the display name of the project
 	Name string `json:"name"`
+
+	// Location is the repository location for the project (e.g., "/default")
+	// If not provided, defaults to "/default"
+	Location string `json:"location,omitempty"`
+
+	// TrackerPrefix is the prefix for work item IDs in this project (e.g., "TEST" for TEST-123)
+	// If not provided, defaults to the project ID
+	TrackerPrefix string `json:"trackerPrefix,omitempty"`
 
 	// Description provides details about the project
 	Description string `json:"description,omitempty"`

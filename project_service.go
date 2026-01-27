@@ -156,28 +156,40 @@ func (s *ProjectService) Create(ctx context.Context, req *CreateProjectRequest) 
 		return nil, NewValidationError("name", "project name is required")
 	}
 
+	if req.Location == "" {
+		return nil, NewValidationError("location", "project location is required")
+	}
+
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/actions/createProject", s.client.baseURL)
 
-	// Prepare request body
+	// Prepare request body - note: this endpoint does NOT use JSON:API format
+	// It expects a flat structure with projectId, location, trackerPrefix, templateId, and params
+	trackerPrefix := req.TrackerPrefix
+	if trackerPrefix == "" {
+		// Default to project ID if not specified
+		trackerPrefix = req.ProjectID
+	}
+
 	body := map[string]interface{}{
-		"data": map[string]interface{}{
-			"type": "projects",
-			"attributes": map[string]interface{}{
-				"projectId":   req.ProjectID,
-				"name":        req.Name,
-				"description": req.Description,
-			},
+		"projectId":     req.ProjectID,
+		"location":      req.Location,
+		"trackerPrefix": trackerPrefix,
+		"params": map[string]interface{}{
+			"name": req.Name,
 		},
 	}
 
 	// Add optional fields
 	if req.TemplateID != "" {
-		body["data"].(map[string]interface{})["attributes"].(map[string]interface{})["templateId"] = req.TemplateID
+		body["templateId"] = req.TemplateID
 	}
 	if req.ParentID != "" {
-		body["data"].(map[string]interface{})["attributes"].(map[string]interface{})["parentId"] = req.ParentID
+		body["parentId"] = req.ParentID
 	}
+
+	// Note: Description might need to be set after creation via Update
+	// as the create endpoint may not support it directly
 
 	// Make request with retry
 	// Note: This returns a job, but we'll return the project for simplicity
@@ -205,14 +217,17 @@ func (s *ProjectService) Create(ctx context.Context, req *CreateProjectRequest) 
 
 	// Return a basic project structure
 	// In a real scenario, you might want to poll the job status
-	return &Project{
+	project := &Project{
 		Type: "projects",
 		ID:   req.ProjectID,
 		Attributes: &ProjectAttributes{
-			Name:        req.Name,
-			Description: req.Description,
+			Name: req.Name,
 		},
-	}, nil
+	}
+	if req.Description != "" {
+		project.Attributes.Description = NewPlainTextContent(req.Description)
+	}
+	return project, nil
 }
 
 // Update updates a project.
@@ -235,9 +250,15 @@ func (s *ProjectService) Update(ctx context.Context, project *Project) (*Project
 	// Build URL
 	urlStr := fmt.Sprintf("%s/projects/%s", s.client.baseURL, url.PathEscape(project.ID))
 
-	// Prepare request body
+	// Prepare request body - exclude links as they're read-only
+	projectData := map[string]interface{}{
+		"type":       project.Type,
+		"id":         project.ID,
+		"attributes": project.Attributes,
+	}
+
 	body := map[string]interface{}{
-		"data": project,
+		"data": projectData,
 	}
 
 	// Make request with retry
@@ -247,6 +268,15 @@ func (s *ProjectService) Update(ctx context.Context, project *Project) (*Project
 		if err != nil {
 			return err
 		}
+
+		// Check if response has content (some PATCH operations return 204 No Content)
+		if resp.StatusCode == 204 || resp.ContentLength == 0 {
+			// No content returned, use the input project as the result
+			updated = *project
+			resp.Body.Close()
+			return nil
+		}
+
 		return internalhttp.DecodeDataResponse(resp, &updated)
 	})
 
