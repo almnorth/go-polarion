@@ -132,3 +132,39 @@ func NewWorkItemError(wi *WorkItem, err error) *WorkItemError {
 		Err:      err,
 	}
 }
+
+// GetDetailedAPIError returns a detailed error message for an APIError.
+// If the error is not an APIError, it returns the standard error message.
+// This is useful for debugging when you need more information about what went wrong.
+//
+// Example usage:
+//
+//	if err != nil {
+//	    log.Printf("Error: %s", polarion.GetDetailedAPIError(err))
+//	}
+func GetDetailedAPIError(err error) string {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.GetDetailedError()
+	}
+	return err.Error()
+}
+
+// GetAPIErrorDetails extracts the error details from an APIError.
+// Returns nil if the error is not an APIError or has no details.
+// This allows you to programmatically inspect specific error details.
+//
+// Example usage:
+//
+//	if details := polarion.GetAPIErrorDetails(err); details != nil {
+//	    for _, detail := range details {
+//	        log.Printf("Field: %s, Error: %s", detail.Pointer, detail.Detail)
+//	    }
+//	}
+func GetAPIErrorDetails(err error) []ErrorDetail {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Details
+	}
+	return nil
+}

@@ -58,7 +58,9 @@ if req.BusinessValue != nil {
 
 ## Quick Start
 
-Here's a minimal example to get you started:
+### Simplified Approach (Recommended)
+
+The easiest way to work with custom fields is using automatic field mapping with JSON tags:
 
 ```go
 package main
@@ -71,12 +73,44 @@ import (
     "github.com/almnorth/go-polarion"
 )
 
-// Define your custom type
+// Define your custom type with JSON tags
 type Requirement struct {
     base          *polarion.WorkItem
-    BusinessValue *string
+    BusinessValue *string `json:"businessValue"`
 }
 
+// Load from WorkItem - automatic!
+func (r *Requirement) LoadFromWorkItem(wi *polarion.WorkItem) error {
+    r.base = wi
+    return polarion.LoadCustomFields(wi, r)
+}
+
+// Save to WorkItem - automatic!
+func (r *Requirement) SaveToWorkItem() error {
+    return polarion.SaveCustomFields(r.base, r)
+}
+
+func main() {
+    client, _ := polarion.New("https://polarion.example.com/rest/v1", "token")
+    project := client.Project("myproject")
+    ctx := context.Background()
+    
+    // Load and use
+    req := &Requirement{}
+    wi, _ := project.WorkItems.Get(ctx, "REQ-123")
+    req.LoadFromWorkItem(wi)
+    
+    if req.BusinessValue != nil {
+        fmt.Printf("Business Value: %s\n", *req.BusinessValue)
+    }
+}
+```
+
+### Manual Approach (For Advanced Use Cases)
+
+If you need more control, you can manually handle field mapping:
+
+```go
 // Load from WorkItem
 func (r *Requirement) LoadFromWorkItem(wi *polarion.WorkItem) error {
     r.base = wi
@@ -97,21 +131,6 @@ func (r *Requirement) SaveToWorkItem() {
         cf.Set("businessValue", *r.BusinessValue)
     } else {
         cf.Delete("businessValue")
-    }
-}
-
-func main() {
-    client, _ := polarion.New("https://polarion.example.com/rest/v1", "token")
-    project := client.Project("myproject")
-    ctx := context.Background()
-    
-    // Load and use
-    req := &Requirement{}
-    wi, _ := project.WorkItems.Get(ctx, "REQ-123")
-    req.LoadFromWorkItem(wi)
-    
-    if req.BusinessValue != nil {
-        fmt.Printf("Business Value: %s\n", *req.BusinessValue)
     }
 }
 ```
@@ -338,6 +357,108 @@ func (r *Requirement) Validate() error {
     return nil
 }
 ```
+
+### Automatic Field Mapping (Recommended)
+
+Instead of manually loading and saving each field, you can use automatic field mapping with JSON tags. This approach significantly reduces boilerplate code and is less error-prone.
+
+#### Using LoadCustomFields and SaveCustomFields
+
+```go
+type Requirement struct {
+    base             *polarion.WorkItem
+    BusinessValue    *string            `json:"businessValue"`
+    TargetRelease    *polarion.DateOnly `json:"targetRelease"`
+    ComplexityPoints *float64           `json:"complexityPoints"`
+    SecurityReviewed *bool              `json:"securityReviewed"`
+}
+
+// Load from WorkItem - automatic!
+func (r *Requirement) LoadFromWorkItem(wi *polarion.WorkItem) error {
+    r.base = wi
+    return polarion.LoadCustomFields(wi, r)
+}
+
+// Save to WorkItem - automatic!
+func (r *Requirement) SaveToWorkItem() error {
+    return polarion.SaveCustomFields(r.base, r)
+}
+```
+
+#### Benefits
+
+- **No manual field extraction**: Just add JSON tags and call `LoadCustomFields`
+- **No manual field saving**: Just call `SaveCustomFields`
+- **Automatic type conversion**: Handles all supported field types automatically
+- **Less code**: Eliminates repetitive if/ok checks for each field
+- **Fewer bugs**: No risk of typos in field names or forgetting to save a field
+- **Easy to maintain**: Adding a new field is just one line with a JSON tag
+
+#### Supported Field Types
+
+The automatic mapper supports all custom field types:
+- `*string` - for string and enum fields
+- `*int` - for integer fields
+- `*float64` - for float fields
+- `*bool` - for boolean fields
+- `*polarion.DateOnly` - for date fields
+- `*polarion.TimeOnly` - for time fields
+- `*polarion.DateTime` - for datetime fields
+- `*polarion.Duration` - for duration fields
+- `*polarion.TextContent` - for text/html fields
+- `*polarion.TableField` - for table fields
+
+#### Complete Example
+
+```go
+// Define your type with JSON tags
+type Requirement struct {
+    base             *polarion.WorkItem
+    BusinessValue    *string            `json:"businessValue"`
+    TargetRelease    *polarion.DateOnly `json:"targetRelease"`
+    ComplexityPoints *float64           `json:"complexityPoints"`
+    SecurityReviewed *bool              `json:"securityReviewed"`
+}
+
+// Constructor
+func NewRequirement(title string) *Requirement {
+    return &Requirement{
+        base: &polarion.WorkItem{
+            Type: "workitems",
+            Attributes: &polarion.WorkItemAttributes{
+                Title:        title,
+                CustomFields: make(map[string]interface{}),
+            },
+        },
+    }
+}
+
+// Load - one line!
+func (r *Requirement) LoadFromWorkItem(wi *polarion.WorkItem) error {
+    r.base = wi
+    return polarion.LoadCustomFields(wi, r)
+}
+
+// Save - one line!
+func (r *Requirement) SaveToWorkItem() error {
+    return polarion.SaveCustomFields(r.base, r)
+}
+
+// Usage
+req := NewRequirement("My Requirement")
+req.BusinessValue = stringPtr("high")
+req.ComplexityPoints = float64Ptr(13.0)
+
+// Save automatically handles all fields
+req.SaveToWorkItem()
+project.WorkItems.Create(ctx, req.base)
+
+// Load automatically populates all fields
+wi, _ := project.WorkItems.Get(ctx, "REQ-123")
+req.LoadFromWorkItem(wi)
+```
+
+For a complete example, see [`examples/custom_workitems_simple/main.go`](../examples/custom_workitems_simple/main.go).
 
 ## Field Type Reference
 
@@ -932,9 +1053,12 @@ func (r *Requirement) SetBusinessValue(value string) {
 }
 ```
 
-## Complete Example
+## Complete Examples
 
-For a complete, runnable example, see [`examples/custom_workitems/main.go`](../examples/custom_workitems/main.go).
+For complete, runnable examples:
+
+- **Simplified approach (recommended)**: [`examples/custom_workitems_simple/main.go`](../examples/custom_workitems_simple/main.go) - Uses automatic field mapping with JSON tags
+- **Manual approach**: [`examples/custom_workitems/main.go`](../examples/custom_workitems/main.go) - Shows manual field handling for advanced use cases
 
 ## Further Reading
 

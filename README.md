@@ -116,17 +116,28 @@ err = project.WorkItems.Delete(ctx, "WI-123", "WI-124")
 
 ### Type-Safe Custom Fields
 
-Define custom work item types with compile-time type checking:
+Define custom work item types with automatic field mapping using JSON tags:
 
 ```go
 type Requirement struct {
     base             *polarion.WorkItem
-    BusinessValue    *string
-    TargetRelease    *polarion.DateOnly
-    ComplexityPoints *float64
+    BusinessValue    *string            `json:"businessValue"`
+    TargetRelease    *polarion.DateOnly `json:"targetRelease"`
+    ComplexityPoints *float64           `json:"complexityPoints"`
 }
 
-// Load from WorkItem
+// Load from WorkItem - automatic!
+func (r *Requirement) LoadFromWorkItem(wi *polarion.WorkItem) error {
+    r.base = wi
+    return polarion.LoadCustomFields(wi, r)
+}
+
+// Save to WorkItem - automatic!
+func (r *Requirement) SaveToWorkItem() error {
+    return polarion.SaveCustomFields(r.base, r)
+}
+
+// Usage
 req := &Requirement{}
 wi, _ := project.WorkItems.Get(ctx, "REQ-123")
 req.LoadFromWorkItem(wi)

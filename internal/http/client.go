@@ -67,17 +67,22 @@ func (c *client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 
 // ErrorDetail represents a single error detail from the Polarion API.
 // This follows the JSON:API error object specification.
+// The Pointer field typically contains a JSON pointer to the field that caused the error,
+// e.g., "/data/0/attributes/customFields/myField" indicates an issue with the custom field "myField".
 type ErrorDetail struct {
 	Status  string `json:"status"`
 	Title   string `json:"title,omitempty"`
 	Detail  string `json:"detail"`
-	Pointer string `json:"pointer,omitempty"`
+	Pointer string `json:"pointer,omitempty"` // JSON pointer to the problematic field
 }
 
 // String returns a string representation of the error detail.
 func (e ErrorDetail) String() string {
 	if e.Pointer != "" {
 		return fmt.Sprintf("[%s] %s (at %s)", e.Status, e.Detail, e.Pointer)
+	}
+	if e.Title != "" {
+		return fmt.Sprintf("[%s] %s: %s", e.Status, e.Title, e.Detail)
 	}
 	return fmt.Sprintf("[%s] %s", e.Status, e.Detail)
 }
@@ -93,6 +98,9 @@ func (c *client) parseAPIError(resp *http.Response) error {
 		return newAPIError(resp.StatusCode, "failed to read error response", resp)
 	}
 
+	// Store raw body for debugging
+	rawBody := string(body)
+
 	// Try to parse JSON:API error format
 	var errorResponse struct {
 		Errors []ErrorDetail `json:"errors"`
@@ -100,14 +108,20 @@ func (c *client) parseAPIError(resp *http.Response) error {
 
 	if err := json.Unmarshal(body, &errorResponse); err != nil {
 		// If parsing fails, return the raw body as the message
-		return newAPIError(resp.StatusCode, string(body), resp)
+		// This helps when the API returns non-JSON:API formatted errors
+		return newAPIError(resp.StatusCode, rawBody, resp)
 	}
 
-	// Create API error with details
-	apiErr := newAPIError(resp.StatusCode, resp.Status, resp)
-	apiErr.Details = errorResponse.Errors
+	// If we got errors, use them
+	if len(errorResponse.Errors) > 0 {
+		apiErr := newAPIError(resp.StatusCode, resp.Status, resp)
+		apiErr.Details = errorResponse.Errors
+		apiErr.RawBody = rawBody
+		return apiErr
+	}
 
-	return apiErr
+	// If no errors in the response, return the raw body
+	return newAPIError(resp.StatusCode, rawBody, resp)
 }
 
 // APIError represents an error from the Polarion API.
@@ -116,6 +130,7 @@ type APIError struct {
 	Message    string
 	Response   *http.Response
 	Details    []ErrorDetail
+	RawBody    string // Raw response body for debugging
 }
 
 // newAPIError creates a new API error.
@@ -137,11 +152,37 @@ func (e *APIError) Error() string {
 	}
 
 	if len(e.Details) > 0 {
-		return fmt.Sprintf("polarion api error (status %d) for %s %s: %s - %v",
-			e.StatusCode, method, url, e.Message, e.Details)
+		// Format error details in a more readable way
+		detailsStr := ""
+		for i, detail := range e.Details {
+			if i > 0 {
+				detailsStr += "; "
+			}
+			if detail.Pointer != "" {
+				// Extract field name from JSON pointer (e.g., "/data/0/attributes/fieldName" -> "fieldName")
+				detailsStr += fmt.Sprintf("field '%s': %s", detail.Pointer, detail.Detail)
+			} else if detail.Title != "" {
+				detailsStr += fmt.Sprintf("%s: %s", detail.Title, detail.Detail)
+			} else {
+				detailsStr += detail.Detail
+			}
+		}
+		return fmt.Sprintf("polarion api error (status %d) for %s %s: %s - %s",
+			e.StatusCode, method, url, e.Message, detailsStr)
 	}
 	return fmt.Sprintf("polarion api error (status %d) for %s %s: %s",
 		e.StatusCode, method, url, e.Message)
+}
+
+// GetDetailedError returns a detailed error message including the raw response body.
+// This is useful for debugging when the standard error message is not sufficient.
+func (e *APIError) GetDetailedError() string {
+	baseError := e.Error()
+	if e.RawBody != "" && len(e.RawBody) < 1000 {
+		// Only include raw body if it's not too large
+		return fmt.Sprintf("%s\nRaw response: %s", baseError, e.RawBody)
+	}
+	return baseError
 }
 
 // DoRequest is a helper function to make HTTP requests with JSON encoding/decoding.

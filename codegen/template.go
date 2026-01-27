@@ -59,11 +59,6 @@ func (t *WorkItemTypeTemplate) Generate() (string, error) {
 	// SaveToWorkItem method
 	t.writeSaveMethod(&sb)
 
-	// Getter and setter methods for each field
-	for _, field := range t.fields {
-		t.writeGetterSetter(&sb, field)
-	}
-
 	// GENERATED_METHODS_END marker
 	sb.WriteString("// GENERATED_METHODS_END\n\n")
 
@@ -109,7 +104,8 @@ func (t *WorkItemTypeTemplate) writeStruct(sb *strings.Builder) {
 			if field.Kind == polarion.FieldKindEnumeration && field.EnumName != "" {
 				sb.WriteString(fmt.Sprintf("\t// Enumeration: %s\n", field.EnumName))
 			}
-			sb.WriteString(fmt.Sprintf("\t%s %s\n\n", field.GoName, field.GoType))
+			// Add JSON tag for automatic field mapping
+			sb.WriteString(fmt.Sprintf("\t%s %s `json:\"%s\"`\n\n", field.GoName, field.GoType, field.ID))
 		}
 		sb.WriteString("\t// GENERATED_FIELDS_END\n\n")
 		sb.WriteString("\t// Add your custom fields here (they will be preserved during refresh)\n")
@@ -136,22 +132,10 @@ func (t *WorkItemTypeTemplate) writeConstructor(sb *strings.Builder) {
 
 // writeLoadMethod writes the LoadFromWorkItem method
 func (t *WorkItemTypeTemplate) writeLoadMethod(sb *strings.Builder) {
-	sb.WriteString(fmt.Sprintf("// LoadFromWorkItem populates the %s from a work item.\n", t.typeName))
+	sb.WriteString(fmt.Sprintf("// LoadFromWorkItem populates the %s from a work item using automatic field mapping.\n", t.typeName))
 	sb.WriteString(fmt.Sprintf("func (w *%s) LoadFromWorkItem(wi *polarion.WorkItem) error {\n", t.typeName))
-	sb.WriteString("\tw.base = wi\n\n")
-	sb.WriteString("\tif wi.Attributes == nil {\n")
-	sb.WriteString("\t\treturn fmt.Errorf(\"work item attributes are nil\")\n")
-	sb.WriteString("\t}\n\n")
-
-	if len(t.fields) > 0 {
-		sb.WriteString("\tcf := polarion.CustomFields(wi.Attributes.CustomFields)\n\n")
-
-		for _, field := range t.fields {
-			t.writeLoadField(sb, field)
-		}
-	}
-
-	sb.WriteString("\treturn nil\n")
+	sb.WriteString("\tw.base = wi\n")
+	sb.WriteString("\treturn polarion.LoadCustomFields(wi, w)\n")
 	sb.WriteString("}\n\n")
 }
 
@@ -225,23 +209,9 @@ func (t *WorkItemTypeTemplate) writeLoadField(sb *strings.Builder, field FieldIn
 
 // writeSaveMethod writes the SaveToWorkItem method
 func (t *WorkItemTypeTemplate) writeSaveMethod(sb *strings.Builder) {
-	sb.WriteString(fmt.Sprintf("// SaveToWorkItem saves the %s fields back to the work item.\n", t.typeName))
-	sb.WriteString(fmt.Sprintf("func (w *%s) SaveToWorkItem() {\n", t.typeName))
-	sb.WriteString("\tif w.base == nil || w.base.Attributes == nil {\n")
-	sb.WriteString("\t\treturn\n")
-	sb.WriteString("\t}\n\n")
-
-	if len(t.fields) > 0 {
-		sb.WriteString("\tif w.base.Attributes.CustomFields == nil {\n")
-		sb.WriteString("\t\tw.base.Attributes.CustomFields = make(map[string]interface{})\n")
-		sb.WriteString("\t}\n\n")
-		sb.WriteString("\tcf := polarion.CustomFields(w.base.Attributes.CustomFields)\n\n")
-
-		for _, field := range t.fields {
-			t.writeSaveField(sb, field)
-		}
-	}
-
+	sb.WriteString(fmt.Sprintf("// SaveToWorkItem saves the %s fields back to the work item using automatic field mapping.\n", t.typeName))
+	sb.WriteString(fmt.Sprintf("func (w *%s) SaveToWorkItem() error {\n", t.typeName))
+	sb.WriteString("\treturn polarion.SaveCustomFields(w.base, w)\n")
 	sb.WriteString("}\n\n")
 }
 
