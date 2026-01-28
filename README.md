@@ -126,29 +126,61 @@ type Requirement struct {
     ComplexityPoints *float64           `json:"complexityPoints"`
 }
 
-// Load from WorkItem - automatic!
-func (r *Requirement) LoadFromWorkItem(wi *polarion.WorkItem) error {
-    r.base = wi
-    return polarion.LoadCustomFields(wi, r)
-}
-
-// Save to WorkItem - automatic!
-func (r *Requirement) SaveToWorkItem() error {
-    return polarion.SaveCustomFields(r.base, r)
-}
-
-// Usage
-req := &Requirement{}
+// Load custom fields from a WorkItem
 wi, _ := project.WorkItems.Get(ctx, "REQ-123")
-req.LoadFromWorkItem(wi)
+req := &Requirement{base: wi}
+polarion.LoadCustomFields(wi, req)
 
-// Type-safe access
+// Access type-safe fields
 if req.BusinessValue != nil {
     fmt.Printf("Business Value: %s\n", *req.BusinessValue)
 }
+
+// Modify and save back
+req.BusinessValue = stringPtr("critical")
+polarion.SaveCustomFields(req.base, req)
+project.WorkItems.Update(ctx, req.base)
 ```
 
 [→ Custom Work Items Guide](docs/CUSTOM-WORKITEMS.md)
+
+### Syncing External Data
+
+Efficient pattern for syncing data from external systems to Polarion:
+
+```go
+type Task struct {
+    base       *polarion.WorkItem
+    ExternalID *string            `json:"externalId,omitempty"`
+    DueDate    *polarion.DateOnly `json:"dueDate,omitempty"`
+}
+
+// PopulateFromExternal maps external data to Polarion work item
+func (t *Task) PopulateFromExternal(record *ExternalRecord) error {
+    if t.base == nil {
+        t.base = &polarion.WorkItem{Type: "workitems", Attributes: &polarion.WorkItemAttributes{Type: "task"}}
+    }
+    t.base.Attributes.Title = record.Title
+    t.ExternalID = &record.ID
+    if record.DueDate != nil {
+        date := polarion.NewDateOnly(*record.DueDate)
+        t.DueDate = &date
+    }
+    return polarion.SaveCustomFields(t.base, t)
+}
+
+// Sync with change detection
+existing, _ := workItemMap[record.ID]
+updated := existing.Clone()
+task := &Task{base: updated}
+task.PopulateFromExternal(record)
+
+if !existing.Equals(updated, project.WorkItems) {
+    project.WorkItems.UpdateWithOldValue(ctx, existing, updated)
+}
+```
+
+[→ Syncer Example](examples/syncer/main.go)
 
 ### Code Generation
 
@@ -397,7 +429,8 @@ if err != nil {
 Complete working examples are available in the [`examples/`](examples/) directory:
 
 - [`examples/basic/main.go`](examples/basic/main.go) - Comprehensive example showing all major features
-- [`examples/custom_workitems/main.go`](examples/custom_workitems/main.go) - Type-safe custom work item types
+- [`examples/syncer/main.go`](examples/syncer/main.go) - **Recommended** pattern for syncing external data
+- [`examples/custom_workitems_simple/main.go`](examples/custom_workitems_simple/main.go) - Type-safe custom fields with JSON tags
 - [`examples/codegen/main.go`](examples/codegen/main.go) - Code generation usage
 
 To run the basic example:

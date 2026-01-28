@@ -350,3 +350,24 @@ func (w *WorkItem) Clone() *WorkItem {
 
 	return clone
 }
+
+// Equals checks if this work item is equal to another work item by comparing their attributes.
+// Returns true if the work items have identical attributes, false otherwise.
+// This method requires a ProjectClient context to access the comparison logic.
+// For a simpler comparison without context, use the WorkItemService.Equals method.
+//
+// Note: This method only compares attributes, not metadata like ID, Type, or Revision.
+// It uses the same comparison logic as UpdateWithOldValue to determine if an update would be needed.
+func (w *WorkItem) Equals(other *WorkItem, service *WorkItemService) bool {
+	if w == nil && other == nil {
+		return true
+	}
+	if w == nil || other == nil {
+		return false
+	}
+	if service == nil {
+		return false
+	}
+	// Use the service's comparison logic
+	return service.Equals(w, other)
+}

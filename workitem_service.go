@@ -392,6 +392,47 @@ func (s *WorkItemService) UpdateWithOldValue(ctx context.Context, original, upda
 	return nil
 }
 
+// Equals checks if two work items are equal by comparing their attributes.
+// Returns true if the work items have identical attributes, false otherwise.
+// This uses the same comparison logic as UpdateWithOldValue.
+//
+// Example:
+//
+//	if project.WorkItems.Equals(original, updated) {
+//	    fmt.Println("No changes detected")
+//	}
+func (s *WorkItemService) Equals(a, b *WorkItem) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	// Use the same comparison logic as UpdateWithOldValue
+	changedAttrs := s.compareAttributes(a.Attributes, b.Attributes)
+	return changedAttrs == nil
+}
+
+// EqualsWithDiff checks if two work items are equal and returns the changed attributes if not.
+// Returns nil if the work items are equal, otherwise returns the changed attributes.
+// This is useful for debugging to see exactly what fields are different.
+//
+// Example:
+//
+//	if diff := project.WorkItems.EqualsWithDiff(original, updated); diff != nil {
+//	    fmt.Printf("Changed fields: %+v\n", diff)
+//	}
+func (s *WorkItemService) EqualsWithDiff(a, b *WorkItem) *WorkItemAttributes {
+	if a == nil && b == nil {
+		return nil
+	}
+	if a == nil || b == nil {
+		// Return a marker to indicate one is nil
+		return &WorkItemAttributes{Title: "ONE_IS_NIL"}
+	}
+	return s.compareAttributes(a.Attributes, b.Attributes)
+}
+
 // compareAttributes compares two WorkItemAttributes and returns a new WorkItemAttributes
 // containing only the fields that have changed. Returns nil if no changes detected.
 func (s *WorkItemService) compareAttributes(current, updated *WorkItemAttributes) *WorkItemAttributes {

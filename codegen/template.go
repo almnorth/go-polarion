@@ -47,30 +47,6 @@ func (t *WorkItemTypeTemplate) Generate() (string, error) {
 	// Struct definition
 	t.writeStruct(&sb)
 
-	// Constructor
-	t.writeConstructor(&sb)
-
-	// GENERATED_METHODS_START marker
-	sb.WriteString("// GENERATED_METHODS_START - Do not edit between markers\n\n")
-
-	// LoadFromWorkItem method
-	t.writeLoadMethod(&sb)
-
-	// SaveToWorkItem method
-	t.writeSaveMethod(&sb)
-
-	// GENERATED_METHODS_END marker
-	sb.WriteString("// GENERATED_METHODS_END\n\n")
-
-	// GetBase method
-	t.writeGetBaseMethod(&sb)
-
-	// GetID method
-	t.writeGetIDMethod(&sb)
-
-	// GetTitle method
-	t.writeGetTitleMethod(&sb)
-
 	return sb.String(), nil
 }
 
@@ -83,35 +59,30 @@ func (t *WorkItemTypeTemplate) writeHeader(sb *strings.Builder) {
 
 // writeImports writes the import statements
 func (t *WorkItemTypeTemplate) writeImports(sb *strings.Builder) {
-	sb.WriteString("import (\n")
-	sb.WriteString("\t\"fmt\"\n\n")
-	sb.WriteString("\tpolarion \"github.com/almnorth/go-polarion\"\n")
-	sb.WriteString(")\n\n")
+	sb.WriteString("import polarion \"github.com/almnorth/go-polarion\"\n\n")
 }
 
 // writeStruct writes the struct definition
 func (t *WorkItemTypeTemplate) writeStruct(sb *strings.Builder) {
 	sb.WriteString(fmt.Sprintf("// %s represents a custom %s work item with type-safe field access.\n", t.typeName, t.typeID))
+	sb.WriteString(fmt.Sprintf("// Use polarion.LoadCustomFields() and polarion.SaveCustomFields() for automatic field mapping.\n"))
 	sb.WriteString(fmt.Sprintf("type %s struct {\n", t.typeName))
 	sb.WriteString("\tbase *polarion.WorkItem\n\n")
 
 	if len(t.fields) > 0 {
-		sb.WriteString("\t// GENERATED_FIELDS_START - Do not edit between markers\n")
 		for _, field := range t.fields {
 			if field.Description != "" {
-				sb.WriteString(fmt.Sprintf("\t// %s: %s\n", field.GoName, field.Description))
+				sb.WriteString(fmt.Sprintf("\t// %s\n", field.Description))
 			}
 			if field.Kind == polarion.FieldKindEnumeration && field.EnumName != "" {
 				sb.WriteString(fmt.Sprintf("\t// Enumeration: %s\n", field.EnumName))
 			}
-			// Add JSON tag for automatic field mapping
-			sb.WriteString(fmt.Sprintf("\t%s %s `json:\"%s\"`\n\n", field.GoName, field.GoType, field.ID))
+			// Add JSON tag with omitempty for automatic field mapping
+			sb.WriteString(fmt.Sprintf("\t%s %s `json:\"%s,omitempty\"`\n", field.GoName, field.GoType, field.ID))
 		}
-		sb.WriteString("\t// GENERATED_FIELDS_END\n\n")
-		sb.WriteString("\t// Add your custom fields here (they will be preserved during refresh)\n")
 	}
 
-	sb.WriteString("}\n\n")
+	sb.WriteString("}\n")
 }
 
 // writeConstructor writes the constructor function
