@@ -95,6 +95,131 @@ type WorkItemRelationships struct {
 	Watches          *Relationship `json:"watches,omitempty"`
 	WorkRecords      *Relationship `json:"workRecords,omitempty"`
 	ApprovalRecords  *Relationship `json:"approvals,omitempty"`
+
+	// CustomRelationships holds custom relationship fields (e.g., user reference custom fields)
+	// These are relationship fields that are not part of the standard Polarion schema.
+	// User reference custom fields will have Data with type "users" and id as the user ID.
+	CustomRelationships map[string]*Relationship `json:"-"`
+}
+
+// knownRelationshipFields is the set of standard relationship field names
+var knownRelationshipFields = map[string]bool{
+	"assignee":                  true,
+	"author":                    true,
+	"categories":                true,
+	"linkedWorkItems":           true,
+	"backlinkedWorkItems":       true,
+	"attachments":               true,
+	"comments":                  true,
+	"externallyLinkedWorkItems": true,
+	"linkedOslcResources":       true,
+	"module":                    true,
+	"moduleFolder":              true,
+	"plan":                      true,
+	"plannedIn":                 true,
+	"project":                   true,
+	"votes":                     true,
+	"watches":                   true,
+	"workRecords":               true,
+	"approvals":                 true,
+	"linkedRevisions":           true,
+	"testSteps":                 true,
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for WorkItemRelationships.
+// It unmarshals known standard relationship fields and captures any remaining fields
+// as custom relationships (e.g., user reference custom fields).
+func (r *WorkItemRelationships) UnmarshalJSON(data []byte) error {
+	// Define a type alias to avoid infinite recursion
+	type Alias WorkItemRelationships
+
+	// First, unmarshal into a map to capture all fields
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	// Unmarshal into the alias to populate standard fields
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+
+	// Initialize CustomRelationships map if needed
+	if r.CustomRelationships == nil {
+		r.CustomRelationships = make(map[string]*Relationship)
+	}
+
+	// Populate CustomRelationships with any fields not in the known set
+	for key, value := range raw {
+		if !knownRelationshipFields[key] {
+			var rel Relationship
+			if err := json.Unmarshal(value, &rel); err != nil {
+				return err
+			}
+			r.CustomRelationships[key] = &rel
+		}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements custom JSON marshaling for WorkItemRelationships.
+// It marshals standard relationship fields and merges in custom relationships at the same level.
+func (r *WorkItemRelationships) MarshalJSON() ([]byte, error) {
+	// Define a type alias to avoid infinite recursion
+	type Alias WorkItemRelationships
+
+	// Marshal the standard fields
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+
+	data, err := json.Marshal(aux)
+	if err != nil {
+		return nil, err
+	}
+
+	// If there are no custom relationships, return the standard fields
+	if len(r.CustomRelationships) == 0 {
+		return data, nil
+	}
+
+	// Unmarshal the standard fields into a map
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+
+	// Merge custom relationships into the map
+	for key, value := range r.CustomRelationships {
+		result[key] = value
+	}
+
+	// Marshal the combined map
+	return json.Marshal(result)
+}
+
+// GetCustomRelationship retrieves a custom relationship by name.
+func (r *WorkItemRelationships) GetCustomRelationship(name string) *Relationship {
+	if r.CustomRelationships == nil {
+		return nil
+	}
+	return r.CustomRelationships[name]
+}
+
+// SetCustomRelationship sets a custom relationship by name.
+func (r *WorkItemRelationships) SetCustomRelationship(name string, rel *Relationship) {
+	if r.CustomRelationships == nil {
+		r.CustomRelationships = make(map[string]*Relationship)
+	}
+	r.CustomRelationships[name] = rel
 }
 
 // Relationship represents a JSON:API relationship.
@@ -370,4 +495,196 @@ func (w *WorkItem) Equals(other *WorkItem, service *WorkItemService) bool {
 	}
 	// Use the service's comparison logic
 	return service.Equals(w, other)
+}
+
+// SetUserReferenceField sets a user reference custom field on the work item.
+// User reference fields are stored as relationships, not attributes.
+// This method ensures the Relationships structure is properly initialized.
+//
+// Example:
+//
+//	wi.SetUserReferenceField("Chairman", "john.doe")
+func (w *WorkItem) SetUserReferenceField(fieldName, userID string) {
+	if w.Relationships == nil {
+		w.Relationships = &WorkItemRelationships{}
+	}
+	if w.Relationships.CustomRelationships == nil {
+		w.Relationships.CustomRelationships = make(map[string]*Relationship)
+	}
+
+	if userID == "" {
+		// Remove the relationship if userID is empty
+		delete(w.Relationships.CustomRelationships, fieldName)
+		return
+	}
+
+	w.Relationships.CustomRelationships[fieldName] = &Relationship{
+		Data: map[string]interface{}{
+			"type": "users",
+			"id":   userID,
+		},
+	}
+}
+
+// GetUserReferenceField retrieves a user reference custom field from the work item.
+// User reference fields are stored as relationships, not attributes.
+// Returns the user ID and true if the field exists and contains a valid user reference,
+// otherwise returns empty string and false.
+//
+// Example:
+//
+//	if userID, ok := wi.GetUserReferenceField("Chairman"); ok {
+//	    fmt.Printf("Responsible Purchaser: %s\n", userID)
+//	}
+func (w *WorkItem) GetUserReferenceField(fieldName string) (string, bool) {
+	if w.Relationships == nil || w.Relationships.CustomRelationships == nil {
+		return "", false
+	}
+
+	rel := w.Relationships.CustomRelationships[fieldName]
+	if rel == nil || rel.Data == nil {
+		return "", false
+	}
+
+	// Handle map[string]interface{} from JSON unmarshaling
+	if data, ok := rel.Data.(map[string]interface{}); ok {
+		if dataType, ok := data["type"].(string); ok && dataType == "users" {
+			if id, ok := data["id"].(string); ok {
+				return id, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+// SetRelationshipReferenceField sets a relationship reference custom field on the work item.
+// This is a generic method that can set any type of relationship reference (users, workitems, etc.).
+// This method ensures the Relationships structure is properly initialized.
+//
+// Example:
+//
+//	wi.SetRelationshipReferenceField("customCategory", polarion.NewCategoryReference("myProject/interface"))
+func (w *WorkItem) SetRelationshipReferenceField(fieldName string, ref *RelationshipReference) {
+	if w.Relationships == nil {
+		w.Relationships = &WorkItemRelationships{}
+	}
+	if w.Relationships.CustomRelationships == nil {
+		w.Relationships.CustomRelationships = make(map[string]*Relationship)
+	}
+
+	if ref == nil || ref.ID == "" {
+		// Remove the relationship if ref is nil or empty
+		delete(w.Relationships.CustomRelationships, fieldName)
+		return
+	}
+
+	w.Relationships.CustomRelationships[fieldName] = ref.ToRelationship()
+}
+
+// GetRelationshipReferenceField retrieves a relationship reference custom field from the work item.
+// This is a generic method that can get any type of relationship reference.
+// Returns the RelationshipReference and true if the field exists and contains a valid reference,
+// otherwise returns nil and false.
+//
+// Example:
+//
+//	if ref, ok := wi.GetRelationshipReferenceField("customCategory"); ok {
+//	    fmt.Printf("Type: %s, ID: %s\n", ref.Type, ref.ID)
+//	}
+func (w *WorkItem) GetRelationshipReferenceField(fieldName string) (*RelationshipReference, bool) {
+	if w.Relationships == nil || w.Relationships.CustomRelationships == nil {
+		return nil, false
+	}
+
+	rel := w.Relationships.CustomRelationships[fieldName]
+	return RelationshipReferenceFromRelationship(rel)
+}
+
+// ExtractRelationshipReferencesToCustomFields extracts all user reference custom fields
+// from Relationships.CustomRelationships and copies them to Attributes.CustomFields
+// for easier access via the CustomFields helper methods.
+// This is useful after fetching a work item from the API.
+//
+// Example:
+//
+//	wi, _ := project.WorkItems.Get(ctx, "WI-123")
+//	wi.ExtractRelationshipReferencesToCustomFields()
+//	cf := polarion.CustomFields(wi.Attributes.CustomFields)
+//	if userID, ok := cf.GetUserReference("Chairman"); ok {
+//	    fmt.Printf("Responsible Purchaser: %s\n", userID)
+//	}
+func (w *WorkItem) ExtractRelationshipReferencesToCustomFields() {
+	if w.Relationships == nil || w.Relationships.CustomRelationships == nil {
+		return
+	}
+	if w.Attributes == nil {
+		w.Attributes = &WorkItemAttributes{}
+	}
+	if w.Attributes.CustomFields == nil {
+		w.Attributes.CustomFields = make(map[string]interface{})
+	}
+
+	for fieldName, rel := range w.Relationships.CustomRelationships {
+		if ref, ok := RelationshipReferenceFromRelationship(rel); ok {
+			// Store as the relationship structure for SetUserReference/GetUserReference compatibility
+			w.Attributes.CustomFields[fieldName] = map[string]interface{}{
+				"data": map[string]interface{}{
+					"type": string(ref.Type),
+					"id":   ref.ID,
+				},
+			}
+		}
+	}
+}
+
+// PrepareRelationshipReferencesForSave moves relationship reference custom fields
+// from Attributes.CustomFields to Relationships.CustomRelationships.
+// This is useful before saving a work item to the API when you've been using
+// CustomFields.SetUserReference() to set user references.
+//
+// Example:
+//
+//	cf := polarion.CustomFields(wi.Attributes.CustomFields)
+//	cf.SetUserReference("Chairman", "john.doe")
+//	wi.PrepareRelationshipReferencesForSave()
+//	project.WorkItems.Update(ctx, wi)
+func (w *WorkItem) PrepareRelationshipReferencesForSave() {
+	if w.Attributes == nil || w.Attributes.CustomFields == nil {
+		return
+	}
+
+	// Look for relationship reference structures in CustomFields
+	for fieldName, value := range w.Attributes.CustomFields {
+		if m, ok := value.(map[string]interface{}); ok {
+			if data, ok := m["data"].(map[string]interface{}); ok {
+				if refType, hasType := data["type"].(string); hasType {
+					if id, hasID := data["id"].(string); hasID {
+						// This looks like a relationship reference, move it to CustomRelationships
+						if w.Relationships == nil {
+							w.Relationships = &WorkItemRelationships{}
+						}
+						if w.Relationships.CustomRelationships == nil {
+							w.Relationships.CustomRelationships = make(map[string]*Relationship)
+						}
+
+						relData := map[string]interface{}{
+							"type": refType,
+							"id":   id,
+						}
+						if revision, ok := data["revision"].(string); ok && revision != "" {
+							relData["revision"] = revision
+						}
+
+						w.Relationships.CustomRelationships[fieldName] = &Relationship{
+							Data: relData,
+						}
+
+						// Remove from CustomFields since it's now in Relationships
+						delete(w.Attributes.CustomFields, fieldName)
+					}
+				}
+			}
+		}
+	}
 }

@@ -24,13 +24,20 @@ import (
 //   - *Duration (for duration fields)
 //   - *TextContent (for text/html fields)
 //   - *TableField (for table fields)
+//   - *UserRef (for single user reference fields - stored in relationships)
+//   - []UserRef (for multi-value user reference fields - stored in relationships)
+//
+// Note: UserRef fields are stored in Polarion's relationships section, not attributes.
+// This function automatically handles loading them from the correct location.
 //
 // Example:
 //
 //	type Requirement struct {
-//	    BusinessValue    *string   `json:"businessValue"`
-//	    TargetRelease    *DateOnly `json:"targetRelease"`
-//	    ComplexityPoints *float64  `json:"complexityPoints"`
+//	    BusinessValue        *string           `json:"businessValue"`
+//	    TargetRelease        *DateOnly         `json:"targetRelease"`
+//	    ComplexityPoints     *float64          `json:"complexityPoints"`
+//	    Purchaser            *polarion.UserRef `json:"purchaser"`   // Single user reference
+//	    BoardMembers            []polarion.UserRef `json:"BoardMembers"`  // Multi-value user reference
 //	}
 //
 //	req := &Requirement{}
@@ -77,6 +84,14 @@ func LoadCustomFields(wi *WorkItem, target interface{}) error {
 			continue
 		}
 
+		// Check if this is a UserRef field - these are loaded from relationships
+		if isUserRefField(field) {
+			if err := loadUserRefField(wi, field, fieldName); err != nil {
+				return fmt.Errorf("failed to load user ref field %s: %w", fieldType.Name, err)
+			}
+			continue
+		}
+
 		// Load the field based on its type
 		if err := loadField(cf, field, fieldName); err != nil {
 			return fmt.Errorf("failed to load field %s: %w", fieldType.Name, err)
@@ -90,11 +105,14 @@ func LoadCustomFields(wi *WorkItem, target interface{}) error {
 // using reflection and JSON struct tags. Fields should be tagged with `json:"fieldName"`
 // to specify the custom field name in Polarion (the same field ID used in the API).
 //
+// Note: UserRef fields are automatically saved to the relationships section, not attributes.
+//
 // Example:
 //
 //	req := &Requirement{
 //	    BusinessValue: stringPtr("high"),
 //	    ComplexityPoints: float64Ptr(13.0),
+//	    Purchaser: polarion.NewUserRef("john.doe"),
 //	}
 //	err := polarion.SaveCustomFields(wi, req)
 func SaveCustomFields(wi *WorkItem, source interface{}) error {
@@ -133,6 +151,14 @@ func SaveCustomFields(wi *WorkItem, source interface{}) error {
 		// Parse tag
 		fieldName := strings.Split(tag, ",")[0]
 		if fieldName == "" || fieldName == "-" {
+			continue
+		}
+
+		// Check if this is a UserRef field - these are saved to relationships
+		if isUserRefField(field) {
+			if err := saveUserRefField(wi, field, fieldName); err != nil {
+				return fmt.Errorf("failed to save user ref field %s: %w", fieldType.Name, err)
+			}
 			continue
 		}
 
@@ -299,5 +325,174 @@ func saveField(cf CustomFields, field reflect.Value, fieldName string) error {
 
 	default:
 		return fmt.Errorf("unsupported field type: %s", elemType.Kind())
+	}
+}
+
+// isUserRefField checks if a reflect.Value represents a *UserRef or []UserRef field
+func isUserRefField(field reflect.Value) bool {
+	fieldType := field.Type()
+
+	// Check for *UserRef
+	if fieldType.Kind() == reflect.Ptr {
+		elemType := fieldType.Elem()
+		if elemType.Kind() == reflect.Struct && elemType.Name() == "UserRef" {
+			return true
+		}
+	}
+
+	// Check for []UserRef
+	if fieldType.Kind() == reflect.Slice {
+		elemType := fieldType.Elem()
+		if elemType.Kind() == reflect.Struct && elemType.Name() == "UserRef" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// loadUserRefField loads a UserRef field from the work item's relationships
+// Handles both *UserRef (single) and []UserRef (multi-value) fields
+func loadUserRefField(wi *WorkItem, field reflect.Value, fieldName string) error {
+	if wi.Relationships == nil || wi.Relationships.CustomRelationships == nil {
+		return nil
+	}
+
+	rel := wi.Relationships.CustomRelationships[fieldName]
+	if rel == nil {
+		return nil
+	}
+
+	fieldType := field.Type()
+
+	// Handle *UserRef (single value)
+	if fieldType.Kind() == reflect.Ptr {
+		userRef := UserRefFromRelationship(rel)
+		if userRef != nil {
+			field.Set(reflect.ValueOf(userRef))
+		}
+		return nil
+	}
+
+	// Handle []UserRef (multi-value)
+	if fieldType.Kind() == reflect.Slice {
+		userRefs := UserRefsFromRelationship(rel)
+		if len(userRefs) > 0 {
+			field.Set(reflect.ValueOf(userRefs))
+		}
+		return nil
+	}
+
+	return nil
+}
+
+// saveUserRefField saves a UserRef field to the work item's relationships
+// Handles both *UserRef (single) and []UserRef (multi-value) fields
+func saveUserRefField(wi *WorkItem, field reflect.Value, fieldName string) error {
+	// Ensure relationships structure exists
+	if wi.Relationships == nil {
+		wi.Relationships = &WorkItemRelationships{}
+	}
+	if wi.Relationships.CustomRelationships == nil {
+		wi.Relationships.CustomRelationships = make(map[string]*Relationship)
+	}
+
+	fieldType := field.Type()
+
+	// Handle *UserRef (single value)
+	if fieldType.Kind() == reflect.Ptr {
+		// If the field is nil, remove the relationship
+		if field.IsNil() {
+			delete(wi.Relationships.CustomRelationships, fieldName)
+			return nil
+		}
+
+		// Get the UserRef value
+		userRef := field.Interface().(*UserRef)
+		if userRef == nil || userRef.ID == "" {
+			delete(wi.Relationships.CustomRelationships, fieldName)
+			return nil
+		}
+
+		// Set the relationship
+		wi.Relationships.CustomRelationships[fieldName] = userRef.ToRelationship()
+		return nil
+	}
+
+	// Handle []UserRef (multi-value)
+	if fieldType.Kind() == reflect.Slice {
+		// If the slice is nil or empty, remove the relationship
+		if field.IsNil() || field.Len() == 0 {
+			delete(wi.Relationships.CustomRelationships, fieldName)
+			return nil
+		}
+
+		// Convert slice to relationship with array data
+		userRefs := field.Interface().([]UserRef)
+		wi.Relationships.CustomRelationships[fieldName] = UserRefsToRelationship(userRefs)
+		return nil
+	}
+
+	return nil
+}
+
+// UserRefsFromRelationship extracts all UserRefs from a Relationship.
+// This handles multi-value user reference fields that come as arrays.
+func UserRefsFromRelationship(rel *Relationship) []UserRef {
+	if rel == nil || rel.Data == nil {
+		return nil
+	}
+
+	var refs []UserRef
+
+	// Handle single data object: {"data": {"type": "users", "id": "john.doe"}}
+	if data, ok := rel.Data.(map[string]interface{}); ok {
+		if dataType, ok := data["type"].(string); ok && dataType == "users" {
+			if id, ok := data["id"].(string); ok && id != "" {
+				refs = append(refs, UserRef{ID: id})
+			}
+		}
+		return refs
+	}
+
+	// Handle array of data: {"data": [{"type": "users", "id": "john.doe"}, {"type": "users", "id": "jane.doe"}]}
+	if dataArray, ok := rel.Data.([]interface{}); ok {
+		for _, item := range dataArray {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				if dataType, ok := itemMap["type"].(string); ok && dataType == "users" {
+					if id, ok := itemMap["id"].(string); ok && id != "" {
+						refs = append(refs, UserRef{ID: id})
+					}
+				}
+			}
+		}
+	}
+
+	return refs
+}
+
+// UserRefsToRelationship converts a slice of UserRefs to a Relationship.
+// This creates the proper array structure for multi-value user reference fields.
+func UserRefsToRelationship(refs []UserRef) *Relationship {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	data := make([]interface{}, 0, len(refs))
+	for _, ref := range refs {
+		if ref.ID != "" {
+			data = append(data, map[string]interface{}{
+				"type": "users",
+				"id":   ref.ID,
+			})
+		}
+	}
+
+	if len(data) == 0 {
+		return nil
+	}
+
+	return &Relationship{
+		Data: data,
 	}
 }

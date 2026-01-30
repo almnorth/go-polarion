@@ -293,6 +293,13 @@ func (s *WorkItemService) Update(ctx context.Context, item *WorkItem) error {
 		Attributes: cleanAttrs,
 	}
 
+	// Include custom relationships (e.g., user reference custom fields) if present
+	if item.Relationships != nil && len(item.Relationships.CustomRelationships) > 0 {
+		updateItem.Relationships = &WorkItemRelationships{
+			CustomRelationships: item.Relationships.CustomRelationships,
+		}
+	}
+
 	body := map[string]interface{}{
 		"data": updateItem,
 	}
@@ -347,9 +354,10 @@ func (s *WorkItemService) UpdateWithOldValue(ctx context.Context, original, upda
 
 	// Compare and get only changed fields
 	changedAttrs := s.compareAttributes(original.Attributes, updated.Attributes)
+	changedRels := s.compareCustomRelationships(original.Relationships, updated.Relationships)
 
 	// If no fields changed, nothing to update
-	if changedAttrs == nil {
+	if changedAttrs == nil && changedRels == nil {
 		return nil
 	}
 
@@ -364,6 +372,11 @@ func (s *WorkItemService) UpdateWithOldValue(ctx context.Context, original, upda
 		Type:       "workitems",
 		ID:         updated.ID,
 		Attributes: changedAttrs,
+	}
+
+	// Include changed custom relationships if any
+	if changedRels != nil {
+		updateItem.Relationships = changedRels
 	}
 
 	body := map[string]interface{}{
@@ -392,8 +405,200 @@ func (s *WorkItemService) UpdateWithOldValue(ctx context.Context, original, upda
 	return nil
 }
 
-// Equals checks if two work items are equal by comparing their attributes.
-// Returns true if the work items have identical attributes, false otherwise.
+// UpdateBatch updates multiple work items in a single API call.
+// This uses the batch PATCH endpoint: PATCH /projects/{projectId}/workitems
+// Each work item must have an ID set.
+// All modifiable fields in each work item will be sent to the API.
+// Read-only fields (type, created, updated, resolvedOn) are automatically excluded.
+//
+// Example:
+//
+//	items := []*polarion.WorkItem{wi1, wi2, wi3}
+//	err := project.WorkItems.UpdateBatch(ctx, items...)
+func (s *WorkItemService) UpdateBatch(ctx context.Context, items ...*WorkItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	// Validate all items have IDs
+	for i, item := range items {
+		if item.ID == "" {
+			return fmt.Errorf("work item at index %d has no ID", i)
+		}
+	}
+
+	// Split into batches
+	batches := s.splitIntoBatches(items)
+
+	// Process each batch
+	for i, batch := range batches {
+		if err := s.updateBatch(ctx, batch); err != nil {
+			return fmt.Errorf("failed to update batch %d: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+// updateBatch updates a single batch of work items.
+// Items are sent directly - the custom JSON marshaling handles excluding read-only fields
+// and merging CustomFields at the root level.
+func (s *WorkItemService) updateBatch(ctx context.Context, items []*WorkItem) error {
+	// Build URL - use the project-scoped batch endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems", s.project.client.baseURL, url.PathEscape(s.project.projectID))
+
+	// Prepare request body - items are sent directly
+	// WorkItemAttributes.MarshalJSON handles:
+	// - Merging CustomFields at root level (json:"-" tag + custom marshaling)
+	// - Read-only fields (Type, Created, Updated, ResolvedOn) are omitted via omitempty
+	body := map[string]interface{}{
+		"data": items,
+	}
+
+	// Make request with retry
+	err := s.project.client.retrier.Do(ctx, func() error {
+		resp, err := internalhttp.DoRequest(ctx, s.project.client.httpClient, "PATCH", urlStr, body)
+		if err != nil {
+			return err
+		}
+		// PATCH may return 204 No Content (empty body) or 200 OK with updated data
+		if resp.StatusCode == 204 {
+			resp.Body.Close()
+			return nil
+		}
+		// Decode response if present
+		var response struct {
+			Data []WorkItem `json:"data"`
+		}
+		if err := internalhttp.DecodeResponse(resp, &response); err != nil {
+			return err
+		}
+		// Update items with response data
+		for i, updated := range response.Data {
+			if i < len(items) {
+				items[i].Revision = updated.Revision
+				if updated.Links != nil {
+					items[i].Links = updated.Links
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to batch update work items: %w", err)
+	}
+
+	return nil
+}
+
+// UpdatePair represents a pair of original and updated work items for batch comparison updates.
+type UpdatePair struct {
+	Original *WorkItem
+	Updated  *WorkItem
+}
+
+// UpdateBatchWithOldValues updates multiple work items in a single API call,
+// comparing each with its original state and only sending changed fields.
+// This results in smaller PATCH requests compared to UpdateBatch.
+//
+// Example:
+//
+//	pairs := []polarion.UpdatePair{
+//	    {Original: original1, Updated: updated1},
+//	    {Original: original2, Updated: updated2},
+//	}
+//	err := project.WorkItems.UpdateBatchWithOldValues(ctx, pairs...)
+func (s *WorkItemService) UpdateBatchWithOldValues(ctx context.Context, pairs ...UpdatePair) error {
+	if len(pairs) == 0 {
+		return nil
+	}
+
+	// Filter out pairs with no changes and build items with only changed attributes
+	var itemsToUpdate []*WorkItem
+	for _, pair := range pairs {
+		if pair.Updated.ID == "" {
+			continue
+		}
+
+		// Compare and get only changed fields
+		changedAttrs := s.compareAttributes(pair.Original.Attributes, pair.Updated.Attributes)
+		changedRels := s.compareCustomRelationships(pair.Original.Relationships, pair.Updated.Relationships)
+
+		if changedAttrs == nil && changedRels == nil {
+			// No changes, skip this item
+			continue
+		}
+
+		// Create update item with only changed attributes and relationships
+		updateItem := &WorkItem{
+			Type:       "workitems",
+			ID:         pair.Updated.ID,
+			Attributes: changedAttrs,
+		}
+
+		// Include changed custom relationships if any
+		if changedRels != nil {
+			updateItem.Relationships = changedRels
+		}
+
+		itemsToUpdate = append(itemsToUpdate, updateItem)
+	}
+
+	if len(itemsToUpdate) == 0 {
+		return nil
+	}
+
+	// Split into batches
+	batches := s.splitIntoBatches(itemsToUpdate)
+
+	// Process each batch
+	for i, batch := range batches {
+		if err := s.updateBatchDiff(ctx, batch); err != nil {
+			return fmt.Errorf("failed to update batch %d: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+// updateBatchDiff updates a single batch of work items with pre-computed diffs.
+func (s *WorkItemService) updateBatchDiff(ctx context.Context, items []*WorkItem) error {
+	// Build URL - use the project-scoped batch endpoint
+	urlStr := fmt.Sprintf("%s/projects/%s/workitems", s.project.client.baseURL, url.PathEscape(s.project.projectID))
+
+	// Prepare request body - items already have only changed attributes
+	body := map[string]interface{}{
+		"data": items,
+	}
+
+	// Make request with retry
+	err := s.project.client.retrier.Do(ctx, func() error {
+		resp, err := internalhttp.DoRequest(ctx, s.project.client.httpClient, "PATCH", urlStr, body)
+		if err != nil {
+			return err
+		}
+		// PATCH may return 204 No Content (empty body) or 200 OK with updated data
+		if resp.StatusCode == 204 {
+			resp.Body.Close()
+			return nil
+		}
+		// Decode response if present
+		var response struct {
+			Data []WorkItem `json:"data"`
+		}
+		return internalhttp.DecodeResponse(resp, &response)
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to batch update work items: %w", err)
+	}
+
+	return nil
+}
+
+// Equals checks if two work items are equal by comparing their attributes and custom relationships.
+// Returns true if the work items have identical attributes and custom relationships, false otherwise.
 // This uses the same comparison logic as UpdateWithOldValue.
 //
 // Example:
@@ -410,7 +615,8 @@ func (s *WorkItemService) Equals(a, b *WorkItem) bool {
 	}
 	// Use the same comparison logic as UpdateWithOldValue
 	changedAttrs := s.compareAttributes(a.Attributes, b.Attributes)
-	return changedAttrs == nil
+	changedRels := s.compareCustomRelationships(a.Relationships, b.Relationships)
+	return changedAttrs == nil && changedRels == nil
 }
 
 // EqualsWithDiff checks if two work items are equal and returns the changed attributes if not.
@@ -593,6 +799,55 @@ func areCustomFieldValuesEqual(a, b interface{}) bool {
 	}
 
 	return string(aJSON) == string(bJSON)
+}
+
+// compareCustomRelationships compares two WorkItemRelationships and returns a new WorkItemRelationships
+// containing only the custom relationships that have changed. Returns nil if no changes detected.
+func (s *WorkItemService) compareCustomRelationships(current, updated *WorkItemRelationships) *WorkItemRelationships {
+	// If updated has no custom relationships, nothing to compare
+	if updated == nil || len(updated.CustomRelationships) == 0 {
+		return nil
+	}
+
+	// If current is nil, all updated custom relationships are new
+	if current == nil || len(current.CustomRelationships) == 0 {
+		return &WorkItemRelationships{
+			CustomRelationships: updated.CustomRelationships,
+		}
+	}
+
+	changed := &WorkItemRelationships{
+		CustomRelationships: make(map[string]*Relationship),
+	}
+	hasChanges := false
+
+	// Compare custom relationships
+	for key, updatedRel := range updated.CustomRelationships {
+		currentRel, exists := current.CustomRelationships[key]
+		if !exists || !areRelationshipsEqual(currentRel, updatedRel) {
+			changed.CustomRelationships[key] = updatedRel
+			hasChanges = true
+		}
+	}
+
+	if !hasChanges {
+		return nil
+	}
+
+	return changed
+}
+
+// areRelationshipsEqual compares two Relationship pointers for equality.
+func areRelationshipsEqual(a, b *Relationship) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+
+	// Compare Data using JSON marshaling for deep comparison
+	return areCustomFieldValuesEqual(a.Data, b.Data)
 }
 
 // Delete deletes one or more work items by ID.

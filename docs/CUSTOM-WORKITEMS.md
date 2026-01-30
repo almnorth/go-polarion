@@ -31,15 +31,15 @@ Polarion allows you to define custom fields on work items to capture project-spe
 ```go
 // Generic approach - prone to errors
 wi, _ := project.WorkItems.Get(ctx, "REQ-123")
-priority := wi.Attributes.CustomFields["priority"] // interface{}
-if priority != nil {
+taskType := wi.Attributes.CustomFields["taskType"] // interface{}
+if taskType != nil {
     // Need type assertion, might panic
-    p := priority.(string)
+    p := taskType.(string)
     fmt.Println(p)
 }
 
 // Easy to make typos
-value := wi.Attributes.CustomFields["priorty"] // Typo! No compile error
+value := wi.Attributes.CustomFields["taskType"] // Typo! No compile error
 ```
 
 ### With Type Safety
@@ -407,6 +407,8 @@ The automatic mapper supports all custom field types:
 - `*polarion.Duration` - for duration fields
 - `*polarion.TextContent` - for text/html fields
 - `*polarion.TableField` - for table fields
+- `*polarion.UserRef` - for single user reference fields
+- `[]polarion.UserRef` - for multi-value user reference fields
 
 #### Complete Example
 
@@ -646,6 +648,43 @@ req.EstimatedEffort = &duration
 // Parsing
 duration, err := polarion.ParseDuration("2d 3h 30m")
 ```
+
+### User Reference Fields
+
+Used for fields that reference Polarion users. These are stored as relationships, not attributes.
+
+```go
+// Definition - single user
+ResponsiblePurchaser *polarion.UserRef `json:"responsiblePurchaser,omitempty"`
+
+// Definition - multiple users
+BoardMembers []polarion.UserRef `json:"boardMembers,omitempty"`
+
+// Setting a single user
+req.ResponsiblePurchaser = polarion.NewUserRef("john.doe")
+
+// Setting multiple users
+req.BoardMembers = []polarion.UserRef{
+    {ID: "john.doe"},
+    {ID: "jane.smith"},
+}
+
+// Checking if set
+if req.ResponsiblePurchaser != nil {
+    fmt.Printf("Purchaser: %s\n", req.ResponsiblePurchaser.ID)
+}
+
+// Iterating multiple users
+for _, member := range req.BoardMembers {
+    fmt.Printf("Board Member: %s\n", member.ID)
+}
+```
+
+**Important**: User reference fields are automatically handled by `LoadCustomFields` and `SaveCustomFields`. They are stored in Polarion's relationships section, not the attributes section. The library handles this complexity automatically.
+
+The JSON:API format for user references:
+- Single user: `{"data": {"type": "users", "id": "john.doe"}}`
+- Multi-value: `{"data": [{"type": "users", "id": "john.doe"}, {"type": "users", "id": "jane.smith"}]}`
 
 ### Text Content Fields
 

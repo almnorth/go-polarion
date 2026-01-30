@@ -144,6 +144,66 @@ project.WorkItems.Update(ctx, req.base)
 
 [→ Custom Work Items Guide](docs/CUSTOM-WORKITEMS.md)
 
+### User Reference Custom Fields
+
+User reference custom fields (fields that reference Polarion users) are stored as relationships, not attributes. The library handles this automatically with the `UserRef` type:
+
+```go
+type BoardMeeting struct {
+    base                 *polarion.WorkItem
+    Chairman *polarion.UserRef   `json:"Chairman,omitempty"` // Single user
+    BoardMembers         []polarion.UserRef  `json:"boardMembers,omitempty"`              // Multi-value
+}
+
+// Set a user reference
+item := &BoardMeeting{base: wi}
+item.Chairman = polarion.NewUserRef("john.doe")
+
+// Set multiple users
+item.BoardMembers = []polarion.UserRef{
+    {ID: "john.doe"},
+    {ID: "jane.smith"},
+}
+
+// Save to work item (automatically handles relationship structure)
+polarion.SaveCustomFields(item.base, item)
+
+// Load from work item (automatically extracts from relationships)
+polarion.LoadCustomFields(wi, item)
+if item.Chairman != nil {
+    fmt.Printf("Chairman: %s\n", item.Chairman.ID)
+}
+```
+
+The `UserRef` type handles the Polarion JSON:API relationship format automatically:
+- Single user: `{"data": {"type": "users", "id": "john.doe"}}`
+- Multi-value: `{"data": [{"type": "users", "id": "john.doe"}, {"type": "users", "id": "jane.smith"}]}`
+
+### Bulk Operations
+
+The library supports efficient bulk operations with automatic batching:
+
+```go
+// Create multiple work items (automatic batching based on size/count limits)
+items := []*polarion.WorkItem{item1, item2, item3, item4, item5}
+err := project.WorkItems.Create(ctx, items...)
+
+// Update multiple work items in a single API call
+err = project.WorkItems.UpdateBatch(ctx, item1, item2, item3)
+
+// Update with change detection (only sends changed fields)
+pairs := []polarion.UpdatePair{
+    {Original: original1, Updated: updated1},
+    {Original: original2, Updated: updated2},
+}
+err = project.WorkItems.UpdateBatchWithOldValues(ctx, pairs...)
+```
+
+The batch operations:
+- Automatically split large batches based on configured `BatchSize` and `MaxContentSize`
+- Support change detection to minimize payload size
+- Handle custom relationships (including user reference fields)
+
 ### Syncing External Data
 
 Efficient pattern for syncing data from external systems to Polarion:

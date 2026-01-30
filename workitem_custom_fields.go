@@ -3,7 +3,10 @@
 
 package polarion
 
-import "strconv"
+import (
+	"encoding/json"
+	"strconv"
+)
 
 // CustomFields provides type-safe access to custom fields in WorkItemAttributes.
 // It wraps the map[string]interface{} to provide convenient accessor methods
@@ -427,4 +430,484 @@ func (cf CustomFields) Has(key string) bool {
 //	cf.Delete("obsoleteField")
 func (cf CustomFields) Delete(key string) {
 	delete(cf, key)
+}
+
+// RelationshipType represents the type of a relationship reference in Polarion.
+// These are the standard types used in Polarion's REST API.
+type RelationshipType string
+
+const (
+	// RelationshipTypeUsers represents a user reference
+	RelationshipTypeUsers RelationshipType = "users"
+
+	// RelationshipTypeWorkItems represents a work item reference
+	RelationshipTypeWorkItems RelationshipType = "workitems"
+
+	// RelationshipTypeDocuments represents a document reference
+	RelationshipTypeDocuments RelationshipType = "documents"
+
+	// RelationshipTypeCategories represents a category reference
+	RelationshipTypeCategories RelationshipType = "categories"
+
+	// RelationshipTypePlans represents a plan reference
+	RelationshipTypePlans RelationshipType = "plans"
+
+	// RelationshipTypeCollections represents a collection reference
+	RelationshipTypeCollections RelationshipType = "collections"
+
+	// RelationshipTypeWorkItemComments represents a work item comment reference
+	RelationshipTypeWorkItemComments RelationshipType = "workitem_comments"
+
+	// RelationshipTypeWorkItemAttachments represents a work item attachment reference
+	RelationshipTypeWorkItemAttachments RelationshipType = "workitem_attachments"
+
+	// RelationshipTypeProjects represents a project reference
+	RelationshipTypeProjects RelationshipType = "projects"
+
+	// RelationshipTypeLinkedWorkItems represents a linked work item reference
+	RelationshipTypeLinkedWorkItems RelationshipType = "linkedworkitems"
+)
+
+// UserRef represents a user reference field in Polarion.
+// This type handles the JSON marshaling/unmarshaling of user reference custom fields
+// which are stored as relationships with type "users".
+//
+// UserRef can be used in custom field structs for type-safe access:
+//
+//	type MyScopeItem struct {
+//	    ResponsiblePurchaser *polarion.UserRef `json:"Chairman,omitempty"`
+//	}
+//
+// When unmarshaling from Polarion API responses, it handles the relationship structure:
+//
+//	{"data": {"type": "users", "id": "john.doe"}}
+//
+// When marshaling for API requests, it produces the same structure.
+// For simple access, use the ID field directly or the String() method.
+type UserRef struct {
+	// ID is the user identifier (e.g., "john.doe", "SSV005")
+	ID string
+}
+
+// NewUserRef creates a new UserRef with the given user ID.
+// Returns nil if the userID is empty.
+func NewUserRef(userID string) *UserRef {
+	if userID == "" {
+		return nil
+	}
+	return &UserRef{ID: userID}
+}
+
+// String returns the user ID as a string.
+func (u UserRef) String() string {
+	return u.ID
+}
+
+// IsEmpty returns true if the UserRef has no ID set.
+func (u UserRef) IsEmpty() bool {
+	return u.ID == ""
+}
+
+// MarshalJSON implements json.Marshaler for UserRef.
+// It produces the relationship structure that Polarion expects:
+// {"data": {"type": "users", "id": "john.doe"}}
+func (u UserRef) MarshalJSON() ([]byte, error) {
+	if u.ID == "" {
+		return []byte("null"), nil
+	}
+	return json.Marshal(map[string]interface{}{
+		"data": map[string]interface{}{
+			"type": "users",
+			"id":   u.ID,
+		},
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler for UserRef.
+// It handles multiple formats:
+// - Relationship structure: {"data": {"type": "users", "id": "john.doe"}}
+// - Array of relationships: {"data": [{"type": "users", "id": "john.doe"}]}
+// - Simple string: "john.doe"
+func (u *UserRef) UnmarshalJSON(data []byte) error {
+	// Handle null
+	if string(data) == "null" {
+		u.ID = ""
+		return nil
+	}
+
+	// Try to unmarshal as a simple string first
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		u.ID = str
+		return nil
+	}
+
+	// Try to unmarshal as a relationship structure
+	var rel struct {
+		Data interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &rel); err != nil {
+		return err
+	}
+
+	// Handle single data object: {"data": {"type": "users", "id": "john.doe"}}
+	if dataMap, ok := rel.Data.(map[string]interface{}); ok {
+		if id, ok := dataMap["id"].(string); ok {
+			u.ID = id
+			return nil
+		}
+	}
+
+	// Handle array of data: {"data": [{"type": "users", "id": "john.doe"}]}
+	if dataArray, ok := rel.Data.([]interface{}); ok && len(dataArray) > 0 {
+		if firstItem, ok := dataArray[0].(map[string]interface{}); ok {
+			if id, ok := firstItem["id"].(string); ok {
+				u.ID = id
+				return nil
+			}
+		}
+	}
+
+	return nil
+}
+
+// ToRelationship converts the UserRef to a Relationship structure
+// suitable for use in WorkItemRelationships.CustomRelationships.
+func (u *UserRef) ToRelationship() *Relationship {
+	if u == nil || u.ID == "" {
+		return nil
+	}
+	return &Relationship{
+		Data: map[string]interface{}{
+			"type": "users",
+			"id":   u.ID,
+		},
+	}
+}
+
+// ToRelationshipReference converts the UserRef to a RelationshipReference.
+func (u *UserRef) ToRelationshipReference() *RelationshipReference {
+	if u == nil || u.ID == "" {
+		return nil
+	}
+	return &RelationshipReference{
+		Type: RelationshipTypeUsers,
+		ID:   u.ID,
+	}
+}
+
+// UserRefFromRelationship creates a UserRef from a Relationship.
+// Returns nil if the relationship is nil or doesn't contain a valid user reference.
+func UserRefFromRelationship(rel *Relationship) *UserRef {
+	if rel == nil || rel.Data == nil {
+		return nil
+	}
+
+	// Handle map[string]interface{} from JSON unmarshaling (single value)
+	if data, ok := rel.Data.(map[string]interface{}); ok {
+		if dataType, ok := data["type"].(string); ok && dataType == "users" {
+			if id, ok := data["id"].(string); ok {
+				return &UserRef{ID: id}
+			}
+		}
+	}
+
+	// Handle []interface{} from JSON unmarshaling (array - return first)
+	if dataArray, ok := rel.Data.([]interface{}); ok && len(dataArray) > 0 {
+		if firstItem, ok := dataArray[0].(map[string]interface{}); ok {
+			if dataType, ok := firstItem["type"].(string); ok && dataType == "users" {
+				if id, ok := firstItem["id"].(string); ok {
+					return &UserRef{ID: id}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// RelationshipReference represents a reference to another resource in Polarion.
+// This is used for custom fields that reference other resources (users, work items, etc.).
+// The structure matches Polarion's JSON:API relationship format.
+type RelationshipReference struct {
+	// Type is the type of the referenced resource (e.g., "users", "workitems")
+	Type RelationshipType `json:"type"`
+
+	// ID is the identifier of the referenced resource
+	// For users: just the user ID (e.g., "john.doe")
+	// For work items: project/workitem format (e.g., "myProject/WI-123")
+	// For categories: project/category format (e.g., "myProject/interface")
+	ID string `json:"id"`
+
+	// Revision is an optional revision for the reference (used for versioned references)
+	Revision string `json:"revision,omitempty"`
+}
+
+// NewRelationshipReference creates a new RelationshipReference with the given type and ID.
+func NewRelationshipReference(refType RelationshipType, id string) *RelationshipReference {
+	return &RelationshipReference{
+		Type: refType,
+		ID:   id,
+	}
+}
+
+// NewUserReference creates a new RelationshipReference for a user.
+func NewUserReference(userID string) *RelationshipReference {
+	return NewRelationshipReference(RelationshipTypeUsers, userID)
+}
+
+// NewWorkItemReference creates a new RelationshipReference for a work item.
+// The id should be in the format "projectId/workItemId" (e.g., "myProject/WI-123").
+func NewWorkItemReference(id string) *RelationshipReference {
+	return NewRelationshipReference(RelationshipTypeWorkItems, id)
+}
+
+// NewCategoryReference creates a new RelationshipReference for a category.
+// The id should be in the format "projectId/categoryId" (e.g., "myProject/interface").
+func NewCategoryReference(id string) *RelationshipReference {
+	return NewRelationshipReference(RelationshipTypeCategories, id)
+}
+
+// ToRelationship converts the RelationshipReference to a Relationship structure
+// suitable for use in WorkItemRelationships.CustomRelationships.
+func (r *RelationshipReference) ToRelationship() *Relationship {
+	if r == nil || r.ID == "" {
+		return nil
+	}
+	data := map[string]interface{}{
+		"type": string(r.Type),
+		"id":   r.ID,
+	}
+	if r.Revision != "" {
+		data["revision"] = r.Revision
+	}
+	return &Relationship{
+		Data: data,
+	}
+}
+
+// ToRelationshipData returns the data portion of a relationship for use in API requests.
+// This is useful when you need to set a single-value relationship.
+func (r *RelationshipReference) ToRelationshipData() map[string]interface{} {
+	if r == nil || r.ID == "" {
+		return nil
+	}
+	data := map[string]interface{}{
+		"type": string(r.Type),
+		"id":   r.ID,
+	}
+	if r.Revision != "" {
+		data["revision"] = r.Revision
+	}
+	return data
+}
+
+// GetRelationshipReference safely retrieves a relationship reference custom field.
+// Relationship reference fields in Polarion are stored as relationships with type and id.
+// This method handles both single references and extracts the first item from arrays.
+// Returns the RelationshipReference and true if the field exists and contains a valid reference,
+// otherwise returns nil and false.
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	if ref, ok := cf.GetRelationshipReference("responsiblePurchaser"); ok {
+//	    fmt.Printf("Type: %s, ID: %s\n", ref.Type, ref.ID)
+//	}
+func (cf CustomFields) GetRelationshipReference(key string) (*RelationshipReference, bool) {
+	val, exists := cf[key]
+	if !exists {
+		return nil, false
+	}
+
+	// Handle nil value
+	if val == nil {
+		return nil, false
+	}
+
+	// If it's already a string (ID extracted from relationship), we can't determine the type
+	// This shouldn't happen in normal usage, but handle it gracefully
+	if str, ok := val.(string); ok {
+		// Assume it's a user reference if it's just a string (backward compatibility)
+		return &RelationshipReference{Type: RelationshipTypeUsers, ID: str}, true
+	}
+
+	// Handle RelationshipReference directly
+	if ref, ok := val.(*RelationshipReference); ok {
+		return ref, true
+	}
+	if ref, ok := val.(RelationshipReference); ok {
+		return &ref, true
+	}
+
+	// Handle relationship structure from JSON unmarshaling
+	// Structure: {"data": {"type": "users", "id": "user123"}} or {"data": [{"type": "users", "id": "user123"}]}
+	if m, ok := val.(map[string]interface{}); ok {
+		return extractRelationshipReferenceFromMap(m)
+	}
+
+	return nil, false
+}
+
+// extractRelationshipReferenceFromMap extracts a RelationshipReference from a map structure.
+// Handles both single data objects and arrays (returns first element).
+func extractRelationshipReferenceFromMap(m map[string]interface{}) (*RelationshipReference, bool) {
+	data := m["data"]
+	if data == nil {
+		return nil, false
+	}
+
+	// Handle single data object: {"data": {"type": "users", "id": "user123"}}
+	if dataMap, ok := data.(map[string]interface{}); ok {
+		return extractRelationshipReferenceFromData(dataMap)
+	}
+
+	// Handle array of data: {"data": [{"type": "users", "id": "user123"}]}
+	if dataArray, ok := data.([]interface{}); ok && len(dataArray) > 0 {
+		if firstItem, ok := dataArray[0].(map[string]interface{}); ok {
+			return extractRelationshipReferenceFromData(firstItem)
+		}
+	}
+
+	return nil, false
+}
+
+// extractRelationshipReferenceFromData extracts a RelationshipReference from a data map.
+func extractRelationshipReferenceFromData(data map[string]interface{}) (*RelationshipReference, bool) {
+	refType, hasType := data["type"].(string)
+	id, hasID := data["id"].(string)
+
+	if !hasType || !hasID {
+		return nil, false
+	}
+
+	ref := &RelationshipReference{
+		Type: RelationshipType(refType),
+		ID:   id,
+	}
+
+	// Extract optional revision
+	if revision, ok := data["revision"].(string); ok {
+		ref.Revision = revision
+	}
+
+	return ref, true
+}
+
+// SetRelationshipReference sets a relationship reference custom field.
+// This creates the proper relationship structure that Polarion expects.
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	cf.SetRelationshipReference("responsiblePurchaser", polarion.NewUserReference("john.doe"))
+func (cf CustomFields) SetRelationshipReference(key string, ref *RelationshipReference) {
+	if ref == nil || ref.ID == "" {
+		delete(cf, key)
+		return
+	}
+	// Store as relationship structure that Polarion expects
+	data := map[string]interface{}{
+		"type": string(ref.Type),
+		"id":   ref.ID,
+	}
+	if ref.Revision != "" {
+		data["revision"] = ref.Revision
+	}
+	cf[key] = map[string]interface{}{
+		"data": data,
+	}
+}
+
+// GetUserReference safely retrieves a user reference custom field.
+// This is a convenience method that wraps GetRelationshipReference for user references.
+// Returns the user ID and true if the field exists and contains a valid user reference,
+// otherwise returns empty string and false.
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	if userID, ok := cf.GetUserReference("responsiblePurchaser"); ok {
+//	    fmt.Printf("Responsible Purchaser: %s\n", userID)
+//	}
+func (cf CustomFields) GetUserReference(key string) (string, bool) {
+	ref, ok := cf.GetRelationshipReference(key)
+	if !ok {
+		return "", false
+	}
+	// Verify it's a user reference
+	if ref.Type != RelationshipTypeUsers {
+		return "", false
+	}
+	return ref.ID, true
+}
+
+// SetUserReference sets a user reference custom field.
+// This is a convenience method that wraps SetRelationshipReference for user references.
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	cf.SetUserReference("responsiblePurchaser", "john.doe")
+func (cf CustomFields) SetUserReference(key string, userID string) {
+	if userID == "" {
+		delete(cf, key)
+		return
+	}
+	cf.SetRelationshipReference(key, NewUserReference(userID))
+}
+
+// RelationshipReferenceFromRelationship extracts a RelationshipReference from a Relationship.
+// Returns the RelationshipReference and true if the relationship contains a valid reference,
+// otherwise returns nil and false.
+func RelationshipReferenceFromRelationship(rel *Relationship) (*RelationshipReference, bool) {
+	if rel == nil || rel.Data == nil {
+		return nil, false
+	}
+
+	// Handle map[string]interface{} from JSON unmarshaling (single value)
+	if data, ok := rel.Data.(map[string]interface{}); ok {
+		return extractRelationshipReferenceFromData(data)
+	}
+
+	// Handle []interface{} from JSON unmarshaling (array - return first)
+	if dataArray, ok := rel.Data.([]interface{}); ok && len(dataArray) > 0 {
+		if firstItem, ok := dataArray[0].(map[string]interface{}); ok {
+			return extractRelationshipReferenceFromData(firstItem)
+		}
+	}
+
+	return nil, false
+}
+
+// RelationshipReferencesFromRelationship extracts all RelationshipReferences from a Relationship.
+// This is useful for multi-value relationships like assignees.
+// Returns a slice of RelationshipReferences.
+func RelationshipReferencesFromRelationship(rel *Relationship) []*RelationshipReference {
+	if rel == nil || rel.Data == nil {
+		return nil
+	}
+
+	var refs []*RelationshipReference
+
+	// Handle map[string]interface{} from JSON unmarshaling (single value)
+	if data, ok := rel.Data.(map[string]interface{}); ok {
+		if ref, ok := extractRelationshipReferenceFromData(data); ok {
+			refs = append(refs, ref)
+		}
+		return refs
+	}
+
+	// Handle []interface{} from JSON unmarshaling (array)
+	if dataArray, ok := rel.Data.([]interface{}); ok {
+		for _, item := range dataArray {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				if ref, ok := extractRelationshipReferenceFromData(itemMap); ok {
+					refs = append(refs, ref)
+				}
+			}
+		}
+	}
+
+	return refs
 }
