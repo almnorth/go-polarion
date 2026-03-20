@@ -129,12 +129,18 @@ func (s *WorkItemService) Query(ctx context.Context, opts QueryOptions) (*PageRe
 		params.Set("revision", opts.Revision)
 	}
 
+	// Add include parameter if specified
+	if len(opts.Include) > 0 {
+		params.Set("include", strings.Join(opts.Include, ","))
+	}
+
 	urlStr += "?" + params.Encode()
 
 	// Make request with retry
 	var response struct {
-		Data  []WorkItem `json:"data"`
-		Links struct {
+		Data     []WorkItem        `json:"data"`
+		Included []json.RawMessage `json:"included"`
+		Links    struct {
 			Next string `json:"next,omitempty"`
 		} `json:"links"`
 		Meta struct {
@@ -152,6 +158,55 @@ func (s *WorkItemService) Query(ctx context.Context, opts QueryOptions) (*PageRe
 
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
+	}
+
+	// Parse included linkedworkitems and wire them to the correct work items.
+	// The Polarion response groups included resources by type; we only handle
+	// "linkedworkitems" here. Each linked work item entry has an ID of the form
+	// "proj/primaryWI/role/proj/secondaryWI", so we can derive the primary work
+	// item's short ID from the first two segments.
+	if len(response.Included) > 0 {
+		// Build an index from work item short ID to slice position for O(1) lookup.
+		wiIndex := make(map[string]int, len(response.Data))
+		for i, wi := range response.Data {
+			// The work item ID is "project/SHORT_ID"; keep the short ID part.
+			shortID := wi.ID
+			if idx := strings.LastIndex(shortID, "/"); idx >= 0 {
+				shortID = shortID[idx+1:]
+			}
+			wiIndex[shortID] = i
+		}
+
+		for _, raw := range response.Included {
+			// Quick-check the type field without fully unmarshaling.
+			var typeCheck struct {
+				Type string `json:"type"`
+				ID   string `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &typeCheck); err != nil {
+				continue
+			}
+			if typeCheck.Type != "linkedworkitems" {
+				continue
+			}
+
+			var link WorkItemLink
+			if err := json.Unmarshal(raw, &link); err != nil {
+				continue
+			}
+
+			// Derive the primary work item's short ID from the link ID.
+			// Link ID format: "project/primaryWI/role/project/secondaryWI"
+			parts := strings.SplitN(typeCheck.ID, "/", 3)
+			if len(parts) < 2 {
+				continue
+			}
+			primaryShortID := parts[1]
+
+			if i, ok := wiIndex[primaryShortID]; ok {
+				response.Data[i].LinkedWorkItemsInline = append(response.Data[i].LinkedWorkItemsInline, link)
+			}
+		}
 	}
 
 	return &PageResult{
@@ -184,6 +239,7 @@ func (s *WorkItemService) QueryAll(ctx context.Context, query string, opts ...Qu
 			PageNumber: pageNum,
 			Fields:     options.fields,
 			Revision:   options.revision,
+			Include:    options.include,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to query page %d: %w", pageNum, err)
@@ -651,9 +707,11 @@ func (s *WorkItemService) compareAttributes(current, updated *WorkItemAttributes
 	}
 	hasChanges := false
 
-	// Compare standard fields
-	if updated.Title != "" && updated.Title != current.Title {
-		changed.Title = updated.Title
+	// Compare standard fields (trim whitespace: Polarion trims on save)
+	updatedTitle := strings.TrimSpace(updated.Title)
+	currentTitle := strings.TrimSpace(current.Title)
+	if updatedTitle != "" && updatedTitle != currentTitle {
+		changed.Title = updatedTitle
 		hasChanges = true
 	}
 
@@ -662,28 +720,38 @@ func (s *WorkItemService) compareAttributes(current, updated *WorkItemAttributes
 		hasChanges = true
 	}
 
-	if updated.Status != "" && updated.Status != current.Status {
-		changed.Status = updated.Status
+	updatedStatus := strings.TrimSpace(updated.Status)
+	currentStatus := strings.TrimSpace(current.Status)
+	if updatedStatus != "" && updatedStatus != currentStatus {
+		changed.Status = updatedStatus
 		hasChanges = true
 	}
 
-	if updated.Resolution != "" && updated.Resolution != current.Resolution {
-		changed.Resolution = updated.Resolution
+	updatedResolution := strings.TrimSpace(updated.Resolution)
+	currentResolution := strings.TrimSpace(current.Resolution)
+	if updatedResolution != "" && updatedResolution != currentResolution {
+		changed.Resolution = updatedResolution
 		hasChanges = true
 	}
 
-	if updated.Priority != "" && updated.Priority != current.Priority {
-		changed.Priority = updated.Priority
+	updatedPriority := strings.TrimSpace(updated.Priority)
+	currentPriority := strings.TrimSpace(current.Priority)
+	if updatedPriority != "" && updatedPriority != currentPriority {
+		changed.Priority = updatedPriority
 		hasChanges = true
 	}
 
-	if updated.Severity != "" && updated.Severity != current.Severity {
-		changed.Severity = updated.Severity
+	updatedSeverity := strings.TrimSpace(updated.Severity)
+	currentSeverity := strings.TrimSpace(current.Severity)
+	if updatedSeverity != "" && updatedSeverity != currentSeverity {
+		changed.Severity = updatedSeverity
 		hasChanges = true
 	}
 
-	if updated.DueDate != "" && updated.DueDate != current.DueDate {
-		changed.DueDate = updated.DueDate
+	updatedDueDate := strings.TrimSpace(updated.DueDate)
+	currentDueDate := strings.TrimSpace(current.DueDate)
+	if updatedDueDate != "" && updatedDueDate != currentDueDate {
+		changed.DueDate = updatedDueDate
 		hasChanges = true
 	}
 
@@ -740,6 +808,7 @@ func (s *WorkItemService) compareAttributes(current, updated *WorkItemAttributes
 }
 
 // areTextContentsEqual compares two TextContent pointers for equality.
+// Values are trimmed of leading/trailing whitespace since Polarion trims on save.
 func areTextContentsEqual(a, b *TextContent) bool {
 	if a == nil && b == nil {
 		return true
@@ -747,7 +816,7 @@ func areTextContentsEqual(a, b *TextContent) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return a.Type == b.Type && a.Value == b.Value
+	return a.Type == b.Type && strings.TrimSpace(a.Value) == strings.TrimSpace(b.Value)
 }
 
 // areTimesEqual compares two time.Time pointers for equality.
@@ -779,7 +848,19 @@ func areHyperlinksEqual(a, b []Hyperlink) bool {
 	return true
 }
 
+// normalizeCustomFieldValue normalizes a custom field value for comparison.
+// Strings are trimmed of leading/trailing whitespace, since Polarion itself
+// trims whitespace on save — so " FOO" and "FOO" are considered identical.
+func normalizeCustomFieldValue(v interface{}) interface{} {
+	if s, ok := v.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return v
+}
+
 // areCustomFieldValuesEqual compares two custom field values for equality.
+// String values are normalized (trimmed) before comparison because Polarion
+// trims whitespace on save, which would otherwise cause false-positive updates.
 func areCustomFieldValuesEqual(a, b interface{}) bool {
 	if a == nil && b == nil {
 		return true
@@ -787,6 +868,10 @@ func areCustomFieldValuesEqual(a, b interface{}) bool {
 	if a == nil || b == nil {
 		return false
 	}
+
+	// Normalize strings: Polarion trims whitespace on save, so " FOO" == "FOO"
+	a = normalizeCustomFieldValue(a)
+	b = normalizeCustomFieldValue(b)
 
 	// Convert both to JSON for deep comparison
 	aJSON, err := json.Marshal(a)

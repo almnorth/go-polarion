@@ -21,6 +21,12 @@ type QueryOptions struct {
 
 	// Revision specifies a specific revision to query
 	Revision string
+
+	// Include specifies related resources to embed inline in the response.
+	// For example, []string{"linkedWorkItems"} requests that linked work item
+	// entries are included in the response's "included" array, avoiding
+	// separate follow-up API calls.
+	Include []string
 }
 
 // PageResult contains paginated query results.
@@ -117,6 +123,7 @@ type queryOptions struct {
 	pageNumber int
 	fields     *FieldSelector
 	revision   string
+	include    []string
 }
 
 // defaultQueryOptions returns default query options.
@@ -160,6 +167,20 @@ func WithRevision(revision string) QueryOption {
 func WithQuery(query string) QueryOption {
 	return func(o *queryOptions) {
 		o.query = query
+	}
+}
+
+// WithInclude requests that the given related resources are embedded inline
+// in the response "included" array.  For example:
+//
+//	polarion.WithInclude("linkedWorkItems")
+//
+// causes the API to return linked-work-item entries alongside each work item,
+// which are then surfaced as WorkItem.LinkedWorkItemsInline without requiring
+// separate follow-up calls.
+func WithInclude(includes ...string) QueryOption {
+	return func(o *queryOptions) {
+		o.include = append(o.include, includes...)
 	}
 }
 

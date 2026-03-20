@@ -146,6 +146,49 @@ result, err := project.WorkItems.Query(ctx, polarion.QueryOptions{
 })
 ```
 
+### Inline Includes (`include` parameter)
+
+The Polarion REST API supports embedding related resources directly in the response
+body via the `include` query parameter.  This avoids separate follow-up API calls —
+for example, fetching a work item's existing links without calling
+`WorkItemLinks.List` once per item.
+
+Use `WithInclude` as a functional option on `QueryAll` / `Query`:
+
+```go
+// Fetch all cases and their existing linked work items in a single paginated query
+items, err := project.WorkItems.QueryAll(
+    ctx,
+    "type:case",
+    polarion.WithInclude("linkedWorkItems"),
+    polarion.WithFields(polarion.FieldsAll), // also requests fields[linkedworkitems]=@all
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, wi := range items {
+    fmt.Printf("%s has %d inline links\n", wi.ID, len(wi.LinkedWorkItemsInline))
+    for _, link := range wi.LinkedWorkItemsInline {
+        fmt.Printf("  → %s (role: %s)\n", link.GetSecondaryWorkItemID(), link.Data.Role)
+    }
+}
+```
+
+You can also use `QueryOptions.Include` directly with the lower-level `Query` call:
+
+```go
+result, err := project.WorkItems.Query(ctx, polarion.QueryOptions{
+    Query:   "type:case",
+    Include: []string{"linkedWorkItems"},
+    Fields:  polarion.FieldsAll,
+})
+```
+
+> **Note:** `WorkItem.LinkedWorkItemsInline` is only populated when the
+> `include=linkedWorkItems` parameter was part of the request.  It is tagged
+> `json:"-"` and has no effect on marshaling.
+
 ### Custom Fields
 
 ```go

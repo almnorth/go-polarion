@@ -101,6 +101,17 @@ wi, err := project.WorkItems.Get(ctx, "WI-123")
 // Query with automatic pagination
 items, err := project.WorkItems.QueryAll(ctx, "type:requirement AND status:open")
 
+// Fetch work items with their linked work items embedded inline (no extra API calls)
+items, err = project.WorkItems.QueryAll(ctx, "type:case",
+    polarion.WithInclude("linkedWorkItems"),
+    polarion.WithFields(polarion.FieldsAll),
+)
+for _, wi := range items {
+    for _, link := range wi.LinkedWorkItemsInline {
+        fmt.Printf("%s → %s (role: %s)\n", wi.ID, link.GetSecondaryWorkItemID(), link.Data.Role)
+    }
+}
+
 // Create work items (automatic batching)
 err = project.WorkItems.Create(ctx, item1, item2, item3)
 

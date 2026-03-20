@@ -32,6 +32,14 @@ type WorkItem struct {
 
 	// Meta contains metadata about the work item
 	Meta *WorkItemMeta `json:"meta,omitempty"`
+
+	// LinkedWorkItemsInline holds the linked work items that were embedded inline
+	// in the API response when the query was made with WithInclude("linkedWorkItems").
+	// This field is populated only when the include parameter was used; it does not
+	// require a separate WorkItemLinks.List call per work item.
+	// The field is not part of the JSON:API payload itself and is therefore excluded
+	// from marshaling.
+	LinkedWorkItemsInline []WorkItemLink `json:"-"`
 }
 
 // WorkItemAttributes contains all work item attributes.
