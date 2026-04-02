@@ -161,10 +161,10 @@ func (s *WorkItemService) Query(ctx context.Context, opts QueryOptions) (*PageRe
 	}
 
 	// Parse included linkedworkitems and wire them to the correct work items.
-	// The Polarion response groups included resources by type; we only handle
-	// "linkedworkitems" here. Each linked work item entry has an ID of the form
-	// "proj/primaryWI/role/proj/secondaryWI", so we can derive the primary work
-	// item's short ID from the first two segments.
+	// The Polarion response groups included resources by type; linked work item
+	// entries have an ID of the form "proj/primaryWI/role/proj/secondaryWI", so
+	// we can derive the primary work item's short ID from the first two segments.
+	// External links use the same "proj/primaryWI/..." prefix pattern.
 	if len(response.Included) > 0 {
 		// Build an index from work item short ID to slice position for O(1) lookup.
 		wiIndex := make(map[string]int, len(response.Data))
@@ -186,12 +186,7 @@ func (s *WorkItemService) Query(ctx context.Context, opts QueryOptions) (*PageRe
 			if err := json.Unmarshal(raw, &typeCheck); err != nil {
 				continue
 			}
-			if typeCheck.Type != "linkedworkitems" {
-				continue
-			}
-
-			var link WorkItemLink
-			if err := json.Unmarshal(raw, &link); err != nil {
+			if typeCheck.Type != "linkedworkitems" && typeCheck.Type != "externallylinkedworkitems" {
 				continue
 			}
 
@@ -204,7 +199,20 @@ func (s *WorkItemService) Query(ctx context.Context, opts QueryOptions) (*PageRe
 			primaryShortID := parts[1]
 
 			if i, ok := wiIndex[primaryShortID]; ok {
-				response.Data[i].LinkedWorkItemsInline = append(response.Data[i].LinkedWorkItemsInline, link)
+				switch typeCheck.Type {
+				case "linkedworkitems":
+					var link WorkItemLink
+					if err := json.Unmarshal(raw, &link); err != nil {
+						continue
+					}
+					response.Data[i].LinkedWorkItemsInline = append(response.Data[i].LinkedWorkItemsInline, link)
+				case "externallylinkedworkitems":
+					var link WorkItemExternalLink
+					if err := json.Unmarshal(raw, &link); err != nil {
+						continue
+					}
+					response.Data[i].ExternallyLinkedWorkItemsInline = append(response.Data[i].ExternallyLinkedWorkItemsInline, link)
+				}
 			}
 		}
 	}

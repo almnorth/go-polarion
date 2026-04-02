@@ -51,6 +51,9 @@ type FieldSelector struct {
 	// LinkedWorkItems specifies which linked work item fields to include
 	LinkedWorkItems string
 
+	// ExternallyLinkedWorkItems specifies which external work item link fields to include
+	ExternallyLinkedWorkItems string
+
 	// WorkItemAttachments specifies which attachment fields to include
 	WorkItemAttachments string
 }
@@ -64,16 +67,18 @@ var (
 
 	// FieldsAll requests all available fields
 	FieldsAll = &FieldSelector{
-		WorkItems:           "@all",
-		LinkedWorkItems:     "@all",
-		WorkItemAttachments: "@all",
+		WorkItems:                 "@all",
+		LinkedWorkItems:           "@all",
+		ExternallyLinkedWorkItems: "@all",
+		WorkItemAttachments:       "@all",
 	}
 
 	// FieldsDefault requests basic fields plus essential relationship data
 	FieldsDefault = &FieldSelector{
-		WorkItems:           "@basic",
-		LinkedWorkItems:     "id,role,suspect",
-		WorkItemAttachments: "@basic",
+		WorkItems:                 "@basic",
+		LinkedWorkItems:           "id,role,suspect",
+		ExternallyLinkedWorkItems: "id,role,workItemURI",
+		WorkItemAttachments:       "@basic",
 	}
 )
 
@@ -94,6 +99,12 @@ func (fs *FieldSelector) WithLinkedWorkItemFields(fields string) *FieldSelector 
 	return fs
 }
 
+// WithExternallyLinkedWorkItemFields sets the external work item link fields to include.
+func (fs *FieldSelector) WithExternallyLinkedWorkItemFields(fields string) *FieldSelector {
+	fs.ExternallyLinkedWorkItems = fields
+	return fs
+}
+
 // WithAttachmentFields sets the attachment fields to include.
 func (fs *FieldSelector) WithAttachmentFields(fields string) *FieldSelector {
 	fs.WorkItemAttachments = fields
@@ -107,6 +118,9 @@ func (fs *FieldSelector) ToQueryParams(params url.Values) {
 	}
 	if fs.LinkedWorkItems != "" {
 		params.Set("fields[linkedworkitems]", fs.LinkedWorkItems)
+	}
+	if fs.ExternallyLinkedWorkItems != "" {
+		params.Set("fields[externallylinkedworkitems]", fs.ExternallyLinkedWorkItems)
 	}
 	if fs.WorkItemAttachments != "" {
 		params.Set("fields[workitem_attachments]", fs.WorkItemAttachments)

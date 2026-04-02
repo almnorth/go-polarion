@@ -10,6 +10,7 @@ Complete reference for all API operations supported by go-polarion.
 - [Work Item Approvals](#work-item-approvals)
 - [Work Item Work Records](#work-item-work-records)
 - [Work Item Links](#work-item-links)
+- [Externally Linked Work Items](#externally-linked-work-items)
 - [Work Item Types](#work-item-types)
 - [Work Item Relationships](#work-item-relationships)
 - [Projects](#projects)
@@ -188,6 +189,30 @@ result, err := project.WorkItems.Query(ctx, polarion.QueryOptions{
 > **Note:** `WorkItem.LinkedWorkItemsInline` is only populated when the
 > `include=linkedWorkItems` parameter was part of the request.  It is tagged
 > `json:"-"` and has no effect on marshaling.
+
+Externally linked work items can be embedded the same way:
+
+```go
+items, err := project.WorkItems.QueryAll(
+    ctx,
+    "type:requirement",
+    polarion.WithInclude("externallyLinkedWorkItems"),
+    polarion.WithFields(
+        polarion.NewFieldSelector().
+            WithWorkItemFields("@basic").
+            WithExternallyLinkedWorkItemFields("@all"),
+    ),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, wi := range items {
+    for _, link := range wi.ExternallyLinkedWorkItemsInline {
+        fmt.Printf("%s -> %s\n", link.Attributes.Role, link.Attributes.WorkItemURI)
+    }
+}
+```
 
 ### Custom Fields
 
@@ -463,6 +488,66 @@ err = project.WorkItemLinks.Update(ctx, link)
 // Delete links
 err = project.WorkItemLinks.Delete(ctx,
     "myproject/WI-123/relates_to/myproject/WI-456")
+```
+
+## Externally Linked Work Items
+
+### List Externally Linked Work Items
+
+```go
+links, err := project.WorkItemExternalLinks.List(
+    ctx,
+    "WI-123",
+    polarion.WithFields(
+        polarion.NewFieldSelector().
+            WithExternallyLinkedWorkItemFields("id,role,workItemURI"),
+    ),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, link := range links {
+    fmt.Printf("%s -> %s\n", link.Attributes.Role, link.Attributes.WorkItemURI)
+}
+```
+
+### Create Externally Linked Work Items
+
+```go
+link := polarion.NewWorkItemExternalLink(
+    "relates_to",
+    "https://remote.example.com/polarion/#/project/OTHER/workitem?id=WI-456",
+)
+
+err = project.WorkItemExternalLinks.Create(ctx, "WI-123", link)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+### Get Or Delete A Specific Externally Linked Work Item
+
+```go
+link, err := project.WorkItemExternalLinks.Get(
+    ctx,
+    polarion.BuildExternalLinkID(
+        "MYPROJECT",
+        "WI-123",
+        "relates_to",
+        "remote.example.com",
+        "OTHER",
+        "WI-456",
+    ),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+err = project.WorkItemExternalLinks.Delete(ctx, link.ID)
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ## Work Item Types

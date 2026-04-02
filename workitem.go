@@ -40,6 +40,11 @@ type WorkItem struct {
 	// The field is not part of the JSON:API payload itself and is therefore excluded
 	// from marshaling.
 	LinkedWorkItemsInline []WorkItemLink `json:"-"`
+
+	// ExternallyLinkedWorkItemsInline holds embedded externally linked work items
+	// returned via include=externallyLinkedWorkItems. This field is excluded from
+	// marshaling because it is not part of the primary work item payload.
+	ExternallyLinkedWorkItemsInline []WorkItemExternalLink `json:"-"`
 }
 
 // WorkItemAttributes contains all work item attributes.
