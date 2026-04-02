@@ -112,6 +112,17 @@ for _, wi := range items {
     }
 }
 
+// Fetch a single work item with backlinks embedded inline
+wi, err = project.WorkItems.Get(ctx, "WI-123",
+    polarion.WithGetFields(polarion.FieldsAll),
+    polarion.WithGetInclude("backlinkedWorkItems"),
+)
+for _, link := range wi.BacklinkedWorkItemsInline {
+    fmt.Printf("%s ← %s (role: %s)\n", wi.ID, link.ID, link.Data.Role)
+}
+// On pre-2512 servers, included backlinks may not expose sourceWorkItem and
+// relationships.workItem may still point at the source side of the link.
+
 // Create work items (automatic batching)
 err = project.WorkItems.Create(ctx, item1, item2, item3)
 

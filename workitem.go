@@ -40,6 +40,14 @@ type WorkItem struct {
 	// The field is not part of the JSON:API payload itself and is therefore excluded
 	// from marshaling.
 	LinkedWorkItemsInline []WorkItemLink `json:"-"`
+
+	// BacklinkedWorkItemsInline holds the backlinks that were embedded inline in
+	// the API response when the query was made with WithInclude("backlinkedWorkItems").
+	// This field is populated only when the include parameter was used; it does not
+	// require a separate relationship fetch per work item.
+	// The field is not part of the JSON:API payload itself and is therefore excluded
+	// from marshaling.
+	BacklinkedWorkItemsInline []WorkItemLink `json:"-"`
 }
 
 // WorkItemAttributes contains all work item attributes.
@@ -87,22 +95,23 @@ type Hyperlink struct {
 
 // WorkItemRelationships contains relationships to other resources.
 type WorkItemRelationships struct {
-	Assignee         *Relationship `json:"assignee,omitempty"`
-	Author           *Relationship `json:"author,omitempty"`
-	Categories       *Relationship `json:"categories,omitempty"`
-	LinkedWorkItems  *Relationship `json:"linkedWorkItems,omitempty"`
-	Attachments      *Relationship `json:"attachments,omitempty"`
-	Comments         *Relationship `json:"comments,omitempty"`
-	ExternallyLinked *Relationship `json:"externallyLinkedWorkItems,omitempty"`
-	LinkedOslc       *Relationship `json:"linkedOslcResources,omitempty"`
-	Module           *Relationship `json:"module,omitempty"`
-	ModuleFolder     *Relationship `json:"moduleFolder,omitempty"`
-	Plan             *Relationship `json:"plan,omitempty"`
-	Project          *Relationship `json:"project,omitempty"`
-	Votes            *Relationship `json:"votes,omitempty"`
-	Watches          *Relationship `json:"watches,omitempty"`
-	WorkRecords      *Relationship `json:"workRecords,omitempty"`
-	ApprovalRecords  *Relationship `json:"approvals,omitempty"`
+	Assignee            *Relationship `json:"assignee,omitempty"`
+	Author              *Relationship `json:"author,omitempty"`
+	Categories          *Relationship `json:"categories,omitempty"`
+	LinkedWorkItems     *Relationship `json:"linkedWorkItems,omitempty"`
+	BacklinkedWorkItems *Relationship `json:"backlinkedWorkItems,omitempty"`
+	Attachments         *Relationship `json:"attachments,omitempty"`
+	Comments            *Relationship `json:"comments,omitempty"`
+	ExternallyLinked    *Relationship `json:"externallyLinkedWorkItems,omitempty"`
+	LinkedOslc          *Relationship `json:"linkedOslcResources,omitempty"`
+	Module              *Relationship `json:"module,omitempty"`
+	ModuleFolder        *Relationship `json:"moduleFolder,omitempty"`
+	Plan                *Relationship `json:"plan,omitempty"`
+	Project             *Relationship `json:"project,omitempty"`
+	Votes               *Relationship `json:"votes,omitempty"`
+	Watches             *Relationship `json:"watches,omitempty"`
+	WorkRecords         *Relationship `json:"workRecords,omitempty"`
+	ApprovalRecords     *Relationship `json:"approvals,omitempty"`
 
 	// CustomRelationships holds custom relationship fields (e.g., user reference custom fields)
 	// These are relationship fields that are not part of the standard Polarion schema.
