@@ -162,7 +162,7 @@ items, err := project.WorkItems.QueryAll(
     ctx,
     "type:case",
     polarion.WithInclude("linkedWorkItems"),
-    polarion.WithFields(polarion.FieldsAll), // also requests fields[linkedworkitems]=@all
+    polarion.WithFields(polarion.FieldsAll), // also requests linked/backlinked sparse fields
 )
 if err != nil {
     log.Fatal(err)
@@ -176,6 +176,32 @@ for _, wi := range items {
 }
 ```
 
+For backlinks, the single-item `Get` form is the documented Polarion pattern:
+
+```go
+wi, err := project.WorkItems.Get(
+    ctx,
+    "WI-123",
+    polarion.WithGetFields(polarion.FieldsAll),
+    polarion.WithGetInclude("backlinkedWorkItems"),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("%s has %d backlinks\n", wi.ID, len(wi.BacklinkedWorkItemsInline))
+for _, link := range wi.BacklinkedWorkItemsInline {
+    fmt.Printf("  ← %s (role: %s)\n", link.ID, link.Data.Role)
+}
+```
+
+> **Compatibility note:** Siemens documents backlink reads and
+> `include=backlinkedWorkItems`, and notes that Polarion 2512 corrected the
+> `relationships.workItem` value for included backlinks. Included backlinks are
+> returned as `linkedworkitems` resources, so sparse fields are controlled via
+> `fields[linkedworkitems]`. Before 2512, `relationships.workItem` may point to
+> the source side of the link instead of the parent Work Item.
+
 You can also use `QueryOptions.Include` directly with the lower-level `Query` call:
 
 ```go
@@ -186,9 +212,11 @@ result, err := project.WorkItems.Query(ctx, polarion.QueryOptions{
 })
 ```
 
-> **Note:** `WorkItem.LinkedWorkItemsInline` is only populated when the
-> `include=linkedWorkItems` parameter was part of the request.  It is tagged
-> `json:"-"` and has no effect on marshaling.
+> **Note:** `WorkItem.LinkedWorkItemsInline` and
+> `WorkItem.BacklinkedWorkItemsInline` are only populated when
+> `include=linkedWorkItems` or `include=backlinkedWorkItems` was part of the
+> request and supported by the target Polarion instance. They are tagged
+> `json:"-"` and have no effect on marshaling.
 
 Externally linked work items can be embedded the same way:
 
@@ -616,6 +644,15 @@ relationships, err := project.WorkItems.GetRelationships(ctx, "WI-123", "linkedW
 if err != nil {
     log.Fatal(err)
 }
+
+// The same generic relationship helpers also work with backlinkedWorkItems
+backlinks, err := project.WorkItems.GetRelationships(ctx, "WI-123", "backlinkedWorkItems")
+if err != nil {
+    log.Fatal(err)
+}
+
+// Passing a full ID also works:
+backlinks, err = project.WorkItems.GetRelationships(ctx, "MYPROJECT/WI-123", "backlinkedWorkItems")
 ```
 
 ### Create Relationships
@@ -627,6 +664,9 @@ newRelationships := []map[string]interface{}{
     {"type": "workitems", "id": "MyProject/WI-789"},
 }
 err = project.WorkItems.CreateRelationships(ctx, "WI-123", "linkedWorkItems", newRelationships...)
+
+// Backlinks use the same relationship ID when supported by the Polarion instance
+err = project.WorkItems.CreateRelationships(ctx, "WI-123", "backlinkedWorkItems", newRelationships...)
 ```
 
 ### Update Relationships

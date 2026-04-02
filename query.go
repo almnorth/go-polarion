@@ -54,6 +54,9 @@ type FieldSelector struct {
 	// ExternallyLinkedWorkItems specifies which external work item link fields to include
 	ExternallyLinkedWorkItems string
 
+	// BacklinkedWorkItems specifies which backlinked work item fields to include
+	BacklinkedWorkItems string
+
 	// WorkItemAttachments specifies which attachment fields to include
 	WorkItemAttachments string
 
@@ -74,6 +77,7 @@ var (
 		WorkItems:                 "@all",
 		LinkedWorkItems:           "@all",
 		ExternallyLinkedWorkItems: "@all",
+		BacklinkedWorkItems:       "@all",
 		WorkItemAttachments:       "@all",
 	}
 
@@ -82,6 +86,7 @@ var (
 		WorkItems:                 "@basic",
 		LinkedWorkItems:           "id,role,suspect",
 		ExternallyLinkedWorkItems: "id,role,workItemURI",
+		BacklinkedWorkItems:       "id,role,suspect",
 		WorkItemAttachments:       "@basic",
 	}
 )
@@ -109,6 +114,12 @@ func (fs *FieldSelector) WithExternallyLinkedWorkItemFields(fields string) *Fiel
 	return fs
 }
 
+// WithBacklinkedWorkItemFields sets the backlinked work item fields to include.
+func (fs *FieldSelector) WithBacklinkedWorkItemFields(fields string) *FieldSelector {
+	fs.BacklinkedWorkItems = fields
+	return fs
+}
+
 // WithAttachmentFields sets the attachment fields to include.
 func (fs *FieldSelector) WithAttachmentFields(fields string) *FieldSelector {
 	fs.WorkItemAttachments = fields
@@ -120,8 +131,14 @@ func (fs *FieldSelector) ToQueryParams(params url.Values) {
 	if fs.WorkItems != "" {
 		params.Set("fields[workitems]", fs.WorkItems)
 	}
-	if fs.LinkedWorkItems != "" {
-		params.Set("fields[linkedworkitems]", fs.LinkedWorkItems)
+	linkedWorkItemFields := fs.LinkedWorkItems
+	if linkedWorkItemFields == "" {
+		// Included backlinks are returned as linkedworkitems resources in the
+		// general work item endpoints, so they share the same sparse field key.
+		linkedWorkItemFields = fs.BacklinkedWorkItems
+	}
+	if linkedWorkItemFields != "" {
+		params.Set("fields[linkedworkitems]", linkedWorkItemFields)
 	}
 	if fs.ExternallyLinkedWorkItems != "" {
 		params.Set("fields[externallylinkedworkitems]", fs.ExternallyLinkedWorkItems)
@@ -222,6 +239,7 @@ type GetOption func(*getOptions)
 type getOptions struct {
 	fields   *FieldSelector
 	revision string
+	include  []string
 }
 
 // defaultGetOptions returns default get options.
@@ -243,5 +261,13 @@ func WithGetFields(fields *FieldSelector) GetOption {
 func WithGetRevision(revision string) GetOption {
 	return func(o *getOptions) {
 		o.revision = revision
+	}
+}
+
+// WithGetInclude requests that the given related resources are embedded inline
+// in the response "included" array for a Get operation.
+func WithGetInclude(includes ...string) GetOption {
+	return func(o *getOptions) {
+		o.include = append(o.include, includes...)
 	}
 }
