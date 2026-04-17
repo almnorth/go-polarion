@@ -861,12 +861,24 @@ func normalizeCustomFieldValue(v interface{}) interface{} {
 // areCustomFieldValuesEqual compares two custom field values for equality.
 // String values are normalized (trimmed) before comparison because Polarion
 // trims whitespace on save, which would otherwise cause false-positive updates.
+// TextContent values (text/html, text/plain) are also normalized by trimming
+// their value field, since Polarion trims whitespace on save.
 func areCustomFieldValuesEqual(a, b interface{}) bool {
 	if a == nil && b == nil {
 		return true
 	}
 	if a == nil || b == nil {
 		return false
+	}
+
+	// Normalize TextContent values: Polarion trims whitespace on save, so
+	// trailing/leading newlines/spaces in text fields cause false-positive updates.
+	// Handle both direct TextContent pointers/values and map representations from JSON.
+	if tcA := normalizeTextContent(a); tcA != nil {
+		a = tcA
+	}
+	if tcB := normalizeTextContent(b); tcB != nil {
+		b = tcB
 	}
 
 	// Normalize strings: Polarion trims whitespace on save, so " FOO" == "FOO"
@@ -884,6 +896,50 @@ func areCustomFieldValuesEqual(a, b interface{}) bool {
 	}
 
 	return string(aJSON) == string(bJSON)
+}
+
+// normalizeTextContent normalizes a TextContent value for comparison.
+// Returns the normalized value if the input is a TextContent, otherwise returns nil.
+// TextContent values are trimmed because Polarion trims whitespace on save.
+func normalizeTextContent(v interface{}) interface{} {
+	// Handle *TextContent
+	if tc, ok := v.(*TextContent); ok && tc != nil {
+		return &TextContent{
+			Type:  tc.Type,
+			Value: strings.TrimSpace(tc.Value),
+		}
+	}
+
+	// Handle TextContent (non-pointer)
+	if tc, ok := v.(TextContent); ok {
+		return TextContent{
+			Type:  tc.Type,
+			Value: strings.TrimSpace(tc.Value),
+		}
+	}
+
+	// Handle map[string]interface{} from JSON unmarshaling
+	if m, ok := v.(map[string]interface{}); ok {
+		if typeVal, hasType := m["type"]; hasType {
+			if valueVal, hasValue := m["value"]; hasValue {
+				// Verify it looks like a TextContent (has both type and value)
+				if _, typeOk := typeVal.(string); typeOk {
+					if _, valueOk := valueVal.(string); valueOk {
+						// Create normalized copy
+						normalized := make(map[string]interface{}, len(m))
+						for k, val := range m {
+							normalized[k] = val
+						}
+						// Trim the value field
+						normalized["value"] = strings.TrimSpace(valueVal.(string))
+						return normalized
+					}
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // compareCustomRelationships compares two WorkItemRelationships and returns a new WorkItemRelationships
