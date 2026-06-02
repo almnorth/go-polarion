@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 
 	internalhttp "github.com/almnorth/go-polarion/internal/http"
 )
@@ -72,61 +73,110 @@ func (s *ProjectService) Get(ctx context.Context, projectID string, opts ...Quer
 	return &project, nil
 }
 
-// List returns all projects.
+// List returns projects, optionally filtered and sorted server-side.
 //
 // Endpoint: GET /projects
 //
-// Example:
+// The GET /projects operation accepts a Lucene "query" parameter (set via
+// WithQuery), a "sort" parameter (WithSort), an "include" parameter
+// (WithInclude) and a "revision" parameter (WithRevision). Pagination is
+// handled automatically by following the JSON:API links.next link.
+//
+// Example — list all projects:
 //
 //	projects, err := client.Projects.List(ctx)
-//	for _, project := range projects {
-//	    fmt.Printf("Project: %s (%s)\n", project.Attributes.Name, project.ID)
-//	}
+//
+// Example — filter by ID/name with a Lucene query:
+//
+//	projects, err := client.Projects.List(ctx, polarion.WithQuery("id:design*"))
 func (s *ProjectService) List(ctx context.Context, opts ...QueryOption) ([]*Project, error) {
-	// Apply options
+	// Apply options. Projects do not use the work-item field selector, so start
+	// with no field selection (callers can opt in via WithFields using the
+	// FieldSelector.Projects field, which emits fields[projects]).
 	options := defaultQueryOptions()
+	options.pageSize = s.client.config.pageSize
+	options.fields = nil
 	for _, opt := range opts {
 		opt(&options)
 	}
 
-	// Build URL
-	urlStr := fmt.Sprintf("%s/projects", s.client.baseURL)
+	var allProjects []*Project
+	pageNum := 1
 
-	// Build query parameters
-	params := url.Values{}
+	for {
+		// Build URL
+		urlStr := fmt.Sprintf("%s/projects", s.client.baseURL)
 
-	// Set page size if specified
-	if options.pageSize > 0 {
-		params.Set("page[size]", strconv.Itoa(options.pageSize))
-	}
+		// Build query parameters
+		params := url.Values{}
 
-	// Add field selection
-	if options.fields != nil {
-		options.fields.ToQueryParams(params)
-	}
-
-	if len(params) > 0 {
-		urlStr += "?" + params.Encode()
-	}
-
-	// Make request with retry
-	var response struct {
-		Data []*Project `json:"data"`
-	}
-
-	err := s.client.retrier.Do(ctx, func() error {
-		resp, err := internalhttp.DoRequest(ctx, s.client.httpClient, "GET", urlStr, nil)
-		if err != nil {
-			return err
+		// Add Lucene query filter if specified
+		if options.query != "" {
+			params.Set("query", options.query)
 		}
-		return internalhttp.DecodeResponse(resp, &response)
-	})
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to list projects: %w", err)
+		// Add sort string if specified
+		if options.sort != "" {
+			params.Set("sort", options.sort)
+		}
+
+		// Set page size
+		pageSize := options.pageSize
+		if pageSize <= 0 {
+			pageSize = s.client.config.pageSize
+		}
+		params.Set("page[size]", strconv.Itoa(pageSize))
+		params.Set("page[number]", strconv.Itoa(pageNum))
+
+		// Add field selection
+		if options.fields != nil {
+			options.fields.ToQueryParams(params)
+		}
+
+		// Add revision if specified
+		if options.revision != "" {
+			params.Set("revision", options.revision)
+		}
+
+		// Add include parameter if specified
+		if len(options.include) > 0 {
+			params.Set("include", strings.Join(options.include, ","))
+		}
+
+		if len(params) > 0 {
+			urlStr += "?" + params.Encode()
+		}
+
+		// Make request with retry
+		var response struct {
+			Data  []*Project `json:"data"`
+			Links struct {
+				Next string `json:"next,omitempty"`
+			} `json:"links"`
+		}
+
+		err := s.client.retrier.Do(ctx, func() error {
+			resp, err := internalhttp.DoRequest(ctx, s.client.httpClient, "GET", urlStr, nil)
+			if err != nil {
+				return err
+			}
+			return internalhttp.DecodeResponse(resp, &response)
+		})
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to list projects: %w", err)
+		}
+
+		allProjects = append(allProjects, response.Data...)
+
+		// Follow pagination via JSON:API links.next
+		if response.Links.Next == "" {
+			break
+		}
+		pageNum++
 	}
 
-	return response.Data, nil
+	return allProjects, nil
 }
 
 // Create creates a new project.

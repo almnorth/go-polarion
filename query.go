@@ -53,6 +53,10 @@ type FieldSelector struct {
 
 	// WorkItemAttachments specifies which attachment fields to include
 	WorkItemAttachments string
+
+	// Projects specifies which project fields to include
+	// Use "@basic" for basic fields, "@all" for all fields, or comma-separated field names
+	Projects string
 }
 
 // Predefined field selectors for common use cases.
@@ -111,6 +115,9 @@ func (fs *FieldSelector) ToQueryParams(params url.Values) {
 	if fs.WorkItemAttachments != "" {
 		params.Set("fields[workitem_attachments]", fs.WorkItemAttachments)
 	}
+	if fs.Projects != "" {
+		params.Set("fields[projects]", fs.Projects)
+	}
 }
 
 // QueryOption is a functional option for configuring queries.
@@ -119,6 +126,7 @@ type QueryOption func(*queryOptions)
 // queryOptions holds internal query configuration.
 type queryOptions struct {
 	query      string
+	sort       string
 	pageSize   int
 	pageNumber int
 	fields     *FieldSelector
@@ -167,6 +175,15 @@ func WithRevision(revision string) QueryOption {
 func WithQuery(query string) QueryOption {
 	return func(o *queryOptions) {
 		o.query = query
+	}
+}
+
+// WithSort sets the sort string for ordering results.
+// The value is a comma-separated list of field names; prefix a field with "-"
+// for descending order (e.g. "name" or "-id").
+func WithSort(sort string) QueryOption {
+	return func(o *queryOptions) {
+		o.sort = sort
 	}
 }
 
