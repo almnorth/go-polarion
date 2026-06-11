@@ -72,7 +72,7 @@ func (g *Generator) Generate(ctx context.Context) error {
 		typeIDs = []string{g.config.TypeID}
 	} else {
 		// All types mode
-		fmt.Println("  Mode: All types\n")
+		fmt.Println("  Mode: All types")
 		typeIDs, err = g.discoverWorkItemTypes(ctx, project)
 		if err != nil {
 			return fmt.Errorf("failed to discover work item types: %w", err)

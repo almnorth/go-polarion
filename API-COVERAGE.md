@@ -97,7 +97,7 @@ This document tracks the implementation status of Polarion REST API endpoints in
 | Collections | GET, POST, PATCH, DELETE, Close, Reopen, Relationships | ❌ | 2506 | - | Not implemented |
 | Collection Reuse | POST (Reuse Action) | ❌ | **2512** | - | New in 2512 |
 
-**Domain Coverage**: 0/3 resources (0%)
+**Domain Coverage**: 1/3 resources (33%)
 
 ### Pages Domain
 
@@ -135,7 +135,7 @@ This document tracks the implementation status of Polarion REST API endpoints in
 
 | Resource | Operations | Status | Min Version | Go File | Notes |
 |----------|-----------|--------|-------------|---------|-------|
-| Externally Linked Work Items | GET, POST, DELETE | ❌ | 2506 | - | Not implemented |
+| Externally Linked Work Items | GET, POST, DELETE | ✅ | 2506 | [`workitem_external_link_service.go`](workitem_external_link_service.go:1) | Complete implementation |
 | Linked OSLC Resources | GET, POST, DELETE | ❌ | 2506 | - | Not implemented |
 | Backlinked Work Items | GET, POST | ❌ | **2512** | - | New in 2512 |
 
@@ -166,16 +166,16 @@ This document tracks the implementation status of Polarion REST API endpoints in
 | Pages | 3 | 0 | 0% |
 | Projects | 3 | 3 | 100% |
 | System & Metadata | 5 | 2 | 40% |
-| External Integration | 3 | 0 | 0% |
+| External Integration | 3 | 1 | 33% |
 | Licensing | 3 | 0 | 0% |
-| **TOTAL** | **52** | **18** | **35%** |
+| **TOTAL** | **52** | **19** | **37%** |
 
 ### By Version
 
 | Version | Total Endpoints | Estimated Implemented | Coverage |
 |---------|----------------|----------------------|----------|
-| 2506 | 220 | ~60 | ~27% |
-| 2512 | 271 | ~71 | ~26% |
+| 2506 | 220 | ~63 | ~29% |
+| 2512 | 271 | ~74 | ~27% |
 
 **Note**: The Go client now implements key endpoints from Polarion 2512 including Metadata, Fields Metadata, and Custom Fields APIs.
 

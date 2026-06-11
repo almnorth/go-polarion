@@ -96,6 +96,9 @@ type ProjectClient struct {
 	// WorkItemLinks provides access to work item link operations
 	WorkItemLinks *WorkItemLinkService
 
+	// WorkItemExternalLinks provides access to externally linked work item operations
+	WorkItemExternalLinks *WorkItemExternalLinkService
+
 	// WorkItemTypes provides access to work item type definition operations
 	WorkItemTypes *WorkItemTypeService
 
@@ -132,6 +135,7 @@ func newProjectClient(client *Client, projectID string) *ProjectClient {
 	pc.WorkItems = newWorkItemService(pc)
 	pc.Enumerations = newEnumerationService(pc)
 	pc.WorkItemLinks = newWorkItemLinkService(pc)
+	pc.WorkItemExternalLinks = newWorkItemExternalLinkService(pc)
 	pc.WorkItemTypes = newWorkItemTypeService(pc)
 	pc.WorkItemComments = newWorkItemCommentService(pc)
 	pc.WorkItemAttachments = newWorkItemAttachmentService(pc)
