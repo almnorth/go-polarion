@@ -62,25 +62,39 @@ func (s *WorkItemService) Get(ctx context.Context, id string, opts ...GetOption)
 	if options.revision != "" {
 		params.Set("revision", options.revision)
 	}
+	if len(options.include) > 0 {
+		params.Set("include", strings.Join(options.include, ","))
+	}
 	if len(params) > 0 {
 		urlStr += "?" + params.Encode()
 	}
 
 	// Make request with retry
-	var wi WorkItem
+	var response struct {
+		Data     WorkItem          `json:"data"`
+		Included []json.RawMessage `json:"included"`
+	}
 	err := s.project.client.retrier.Do(ctx, func() error {
 		resp, err := internalhttp.DoRequest(ctx, s.project.client.httpClient, "GET", urlStr, nil)
 		if err != nil {
 			return err
 		}
-		return internalhttp.DecodeDataResponse(resp, &wi)
+		return internalhttp.DecodeResponse(resp, &response)
 	})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get work item %s: %w", id, err)
 	}
 
-	return &wi, nil
+	includeLinkedWorkItems := includesRelationship(options.include, "linkedWorkItems")
+	includeBacklinkedWorkItems := includesRelationship(options.include, "backlinkedWorkItems")
+	if len(response.Included) > 0 && (includeLinkedWorkItems || includeBacklinkedWorkItems) {
+		items := []WorkItem{response.Data}
+		parseIncludedWorkItemLinks(items, response.Included, includeLinkedWorkItems, includeBacklinkedWorkItems)
+		response.Data = items[0]
+	}
+
+	return &response.Data, nil
 }
 
 // Query retrieves work items matching a query with pagination.
@@ -160,53 +174,14 @@ func (s *WorkItemService) Query(ctx context.Context, opts QueryOptions) (*PageRe
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
 
-	// Parse included linkedworkitems and wire them to the correct work items.
-	// The Polarion response groups included resources by type; we only handle
-	// "linkedworkitems" here. Each linked work item entry has an ID of the form
-	// "proj/primaryWI/role/proj/secondaryWI", so we can derive the primary work
-	// item's short ID from the first two segments.
-	if len(response.Included) > 0 {
-		// Build an index from work item short ID to slice position for O(1) lookup.
-		wiIndex := make(map[string]int, len(response.Data))
-		for i, wi := range response.Data {
-			// The work item ID is "project/SHORT_ID"; keep the short ID part.
-			shortID := wi.ID
-			if idx := strings.LastIndex(shortID, "/"); idx >= 0 {
-				shortID = shortID[idx+1:]
-			}
-			wiIndex[shortID] = i
-		}
-
-		for _, raw := range response.Included {
-			// Quick-check the type field without fully unmarshaling.
-			var typeCheck struct {
-				Type string `json:"type"`
-				ID   string `json:"id"`
-			}
-			if err := json.Unmarshal(raw, &typeCheck); err != nil {
-				continue
-			}
-			if typeCheck.Type != "linkedworkitems" {
-				continue
-			}
-
-			var link WorkItemLink
-			if err := json.Unmarshal(raw, &link); err != nil {
-				continue
-			}
-
-			// Derive the primary work item's short ID from the link ID.
-			// Link ID format: "project/primaryWI/role/project/secondaryWI"
-			parts := strings.SplitN(typeCheck.ID, "/", 3)
-			if len(parts) < 2 {
-				continue
-			}
-			primaryShortID := parts[1]
-
-			if i, ok := wiIndex[primaryShortID]; ok {
-				response.Data[i].LinkedWorkItemsInline = append(response.Data[i].LinkedWorkItemsInline, link)
-			}
-		}
+	// Parse included linked work item resources and wire them to the correct work
+	// items. Polarion returns both linkedWorkItems and backlinkedWorkItems as
+	// "linkedworkitems" resources; the owning work item differs based on whether
+	// the link should be attached by its primary or secondary work item ID.
+	includeLinkedWorkItems := includesRelationship(opts.Include, "linkedWorkItems")
+	includeBacklinkedWorkItems := includesRelationship(opts.Include, "backlinkedWorkItems")
+	if len(response.Included) > 0 && (includeLinkedWorkItems || includeBacklinkedWorkItems) {
+		parseIncludedWorkItemLinks(response.Data, response.Included, includeLinkedWorkItems, includeBacklinkedWorkItems)
 	}
 
 	return &PageResult{
@@ -214,6 +189,79 @@ func (s *WorkItemService) Query(ctx context.Context, opts QueryOptions) (*PageRe
 		HasNext:    response.Links.Next != "",
 		TotalCount: response.Meta.TotalCount,
 	}, nil
+}
+
+func includesRelationship(includes []string, relationship string) bool {
+	for _, include := range includes {
+		if include == relationship {
+			return true
+		}
+	}
+	return false
+}
+
+func primaryWorkItemIDFromLinkID(linkID string) string {
+	// Link ID format: "project/primaryWI/role/project/secondaryWI"
+	parts := strings.SplitN(linkID, "/", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+func secondaryWorkItemIDFromLinkID(linkID string) string {
+	// Link ID format: "project/primaryWI/role/project/secondaryWI"
+	parts := strings.Split(linkID, "/")
+	if len(parts) < 5 {
+		return ""
+	}
+	return parts[len(parts)-1]
+}
+
+func parseIncludedWorkItemLinks(items []WorkItem, included []json.RawMessage, includeLinkedWorkItems, includeBacklinkedWorkItems bool) {
+	// Build an index from work item short ID to slice position for O(1) lookup.
+	wiIndex := make(map[string]int, len(items))
+	for i, wi := range items {
+		shortID := wi.ID
+		if idx := strings.LastIndex(shortID, "/"); idx >= 0 {
+			shortID = shortID[idx+1:]
+		}
+		wiIndex[shortID] = i
+	}
+
+	for _, raw := range included {
+		var typeCheck struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &typeCheck); err != nil {
+			continue
+		}
+		if typeCheck.Type != "linkedworkitems" {
+			continue
+		}
+
+		var link WorkItemLink
+		if err := json.Unmarshal(raw, &link); err != nil {
+			continue
+		}
+
+		if includeLinkedWorkItems {
+			primaryShortID := primaryWorkItemIDFromLinkID(typeCheck.ID)
+			if i, ok := wiIndex[primaryShortID]; ok {
+				items[i].LinkedWorkItemsInline = append(items[i].LinkedWorkItemsInline, link)
+			}
+		}
+
+		if includeBacklinkedWorkItems {
+			// Use the link ID instead of relationships.workItem because Polarion
+			// changed the meaning of workItem for included backlinks in 2512.
+			secondaryShortID := secondaryWorkItemIDFromLinkID(typeCheck.ID)
+			if i, ok := wiIndex[secondaryShortID]; ok {
+				items[i].BacklinkedWorkItemsInline = append(items[i].BacklinkedWorkItemsInline, link)
+			}
+		}
+	}
 }
 
 // QueryAll retrieves all work items matching a query with automatic pagination.
@@ -1144,11 +1192,13 @@ func (s *WorkItemService) createBatch(ctx context.Context, items []*WorkItem) er
 //
 //	relationships, err := project.WorkItems.GetRelationships(ctx, "WI-123", "linkedWorkItems")
 func (s *WorkItemService) GetRelationships(ctx context.Context, workItemID, relationshipID string) (interface{}, error) {
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL - use the project-scoped endpoint
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/relationships/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(relationshipID))
 
 	// Make request with retry
@@ -1181,11 +1231,13 @@ func (s *WorkItemService) CreateRelationships(ctx context.Context, workItemID, r
 		return nil
 	}
 
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL - use the project-scoped endpoint
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/relationships/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(relationshipID))
 
 	// Prepare request body
@@ -1223,11 +1275,13 @@ func (s *WorkItemService) UpdateRelationships(ctx context.Context, workItemID, r
 		return nil
 	}
 
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL - use the project-scoped endpoint
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/relationships/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(relationshipID))
 
 	// Prepare request body
@@ -1258,11 +1312,13 @@ func (s *WorkItemService) UpdateRelationships(ctx context.Context, workItemID, r
 //
 //	err := project.WorkItems.DeleteRelationships(ctx, "WI-123", "linkedWorkItems")
 func (s *WorkItemService) DeleteRelationships(ctx context.Context, workItemID, relationshipID string) error {
+	cleanWorkItemID := extractWorkItemID(workItemID)
+
 	// Build URL - use the project-scoped endpoint
 	urlStr := fmt.Sprintf("%s/projects/%s/workitems/%s/relationships/%s",
 		s.project.client.baseURL,
 		url.PathEscape(s.project.projectID),
-		url.PathEscape(workItemID),
+		url.PathEscape(cleanWorkItemID),
 		url.PathEscape(relationshipID))
 
 	// Make request with retry

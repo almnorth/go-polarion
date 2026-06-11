@@ -137,9 +137,9 @@ This document tracks the implementation status of Polarion REST API endpoints in
 |----------|-----------|--------|-------------|---------|-------|
 | Externally Linked Work Items | GET, POST, DELETE | ❌ | 2506 | - | Not implemented |
 | Linked OSLC Resources | GET, POST, DELETE | ❌ | 2506 | - | Not implemented |
-| Backlinked Work Items | GET, POST | ❌ | **2512** | - | New in 2512 |
+| Backlinked Work Items | GET, POST | ✅ | **GET: 2310+, POST batch create: 2512+** | [`workitem_service.go`](workitem_service.go:1), [`query.go`](query.go:1) | Supported through generic work item APIs; included backlinks use `linkedworkitems` sparse fields and Polarion 2512 corrected the included `workItem` semantics |
 
-**Domain Coverage**: 0/3 resources (0%)
+**Domain Coverage**: 1/3 resources (33%)
 
 ### Licensing Domain
 
@@ -166,9 +166,9 @@ This document tracks the implementation status of Polarion REST API endpoints in
 | Pages | 3 | 0 | 0% |
 | Projects | 3 | 3 | 100% |
 | System & Metadata | 5 | 2 | 40% |
-| External Integration | 3 | 0 | 0% |
+| External Integration | 3 | 1 | 33% |
 | Licensing | 3 | 0 | 0% |
-| **TOTAL** | **52** | **18** | **35%** |
+| **TOTAL** | **52** | **19** | **37%** |
 
 ### By Version
 
@@ -188,7 +188,7 @@ The following features are **only available in Polarion 2512+**:
 - **Licensing** - 9 endpoints
 - **Metadata** - 3 endpoints
 - **Current User** - 1 endpoint
-- **Backlinked Work Items** - 2 endpoints
+- **Batch creation of Backlinked Work Items** - POST support
 - **Page Comments** - 4 endpoints
 
 ### Enhanced Resources
@@ -216,13 +216,13 @@ The following features are **only available in Polarion 2512+**:
 | **Custom Fields** | **2512** |
 | **Licensing** | **2512** |
 | **Metadata API** | **2512** |
-| **Backlinked Work Items** | **2512** |
+| **Backlinked Work Items** | **GET documented from 2310+, POST batch create in 2512+** |
 | **Page Comments** | **2512** |
 | **Enhanced Jobs** | **2512** |
 
 ### Backward Compatibility
 
-The Go client is designed to work with Polarion 2506+. Features requiring 2512+ will check the Polarion version and return appropriate errors for unsupported operations.
+The Go client is designed to work with Polarion 2506+. Features requiring 2512+ will check the Polarion version and return appropriate errors for unsupported operations. For backlink includes, note Siemens' documented behavior change in 2512: before 2512, the included backlink `workItem` relationship could point to the other side of the link instead of the parent Work Item.
 
 ## Notes
 
@@ -250,5 +250,5 @@ When implementing new endpoints, check the minimum Polarion version required and
 
 ---
 
-**Last Updated**: 2026-01-26  
-**Document Version**: 1.0
+**Last Updated**: 2026-04-02  
+**Document Version**: 1.1

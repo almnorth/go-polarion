@@ -12,6 +12,10 @@ import "strings"
 type LinkedWorkItemRelationships struct {
 	// WorkItem is the relationship to the secondary (target) work item
 	WorkItem *Relationship `json:"workItem,omitempty"`
+
+	// SourceWorkItem is present on backlinked work item responses and points to
+	// the originating work item on the other side of the backlink.
+	SourceWorkItem *Relationship `json:"sourceWorkItem,omitempty"`
 }
 
 // LinkRole represents a link role definition.
@@ -164,6 +168,142 @@ func (l *WorkItemLink) GetSecondaryProjectID() string {
 	parts := strings.Split(fullID, "/")
 	if len(parts) >= 2 {
 		return parts[0]
+	}
+
+	return ""
+}
+
+// GetPrimaryWorkItemID extracts the primary work item ID from the link ID.
+// Returns the full ID (e.g., "PROJECT/WI-123").
+func (l *WorkItemLink) GetPrimaryWorkItemID() string {
+	if l.ID == "" {
+		return ""
+	}
+
+	parts := strings.Split(l.ID, "/")
+	if len(parts) != 5 {
+		return ""
+	}
+
+	return parts[0] + "/" + parts[1]
+}
+
+// GetPrimaryWorkItemIDShort extracts the primary work item ID without the project prefix.
+func (l *WorkItemLink) GetPrimaryWorkItemIDShort() string {
+	fullID := l.GetPrimaryWorkItemID()
+	if fullID == "" {
+		return ""
+	}
+
+	parts := strings.Split(fullID, "/")
+	return parts[len(parts)-1]
+}
+
+// GetPrimaryProjectID extracts the primary project ID from the link ID.
+func (l *WorkItemLink) GetPrimaryProjectID() string {
+	fullID := l.GetPrimaryWorkItemID()
+	if fullID == "" {
+		return ""
+	}
+
+	parts := strings.Split(fullID, "/")
+	if len(parts) >= 2 {
+		return parts[0]
+	}
+
+	return ""
+}
+
+// GetBacklinkSourceWorkItemID returns the work item on the other side of the backlink.
+// On Polarion 2512+ this prefers relationships.sourceWorkItem when present.
+// On older payloads it falls back to the primary side encoded in the link ID.
+func (l *WorkItemLink) GetBacklinkSourceWorkItemID() string {
+	if l.Relationships != nil && l.Relationships.SourceWorkItem != nil {
+		if id := relationshipResourceID(l.Relationships.SourceWorkItem); id != "" {
+			return id
+		}
+	}
+
+	return l.GetPrimaryWorkItemID()
+}
+
+// GetBacklinkSourceWorkItemIDShort returns the short ID for the source side of the backlink.
+func (l *WorkItemLink) GetBacklinkSourceWorkItemIDShort() string {
+	fullID := l.GetBacklinkSourceWorkItemID()
+	if fullID == "" {
+		return ""
+	}
+
+	parts := strings.Split(fullID, "/")
+	return parts[len(parts)-1]
+}
+
+// GetBacklinkSourceProjectID returns the project ID for the source side of the backlink.
+func (l *WorkItemLink) GetBacklinkSourceProjectID() string {
+	fullID := l.GetBacklinkSourceWorkItemID()
+	if fullID == "" {
+		return ""
+	}
+
+	parts := strings.Split(fullID, "/")
+	if len(parts) >= 2 {
+		return parts[0]
+	}
+
+	return ""
+}
+
+// GetBacklinkParentWorkItemID returns the parent/owner work item for a backlink.
+// This is derived from the secondary side of the link ID so it stays stable across
+// the pre-2512 and 2512+ included backlink payload differences.
+func (l *WorkItemLink) GetBacklinkParentWorkItemID() string {
+	if l.ID == "" {
+		return ""
+	}
+
+	parts := strings.Split(l.ID, "/")
+	if len(parts) != 5 {
+		return ""
+	}
+
+	return parts[3] + "/" + parts[4]
+}
+
+// GetBacklinkParentWorkItemIDShort returns the short ID for the parent side of the backlink.
+func (l *WorkItemLink) GetBacklinkParentWorkItemIDShort() string {
+	fullID := l.GetBacklinkParentWorkItemID()
+	if fullID == "" {
+		return ""
+	}
+
+	parts := strings.Split(fullID, "/")
+	return parts[len(parts)-1]
+}
+
+// GetBacklinkParentProjectID returns the project ID for the parent side of the backlink.
+func (l *WorkItemLink) GetBacklinkParentProjectID() string {
+	fullID := l.GetBacklinkParentWorkItemID()
+	if fullID == "" {
+		return ""
+	}
+
+	parts := strings.Split(fullID, "/")
+	if len(parts) >= 2 {
+		return parts[0]
+	}
+
+	return ""
+}
+
+func relationshipResourceID(rel *Relationship) string {
+	if rel == nil || rel.Data == nil {
+		return ""
+	}
+
+	if data, ok := rel.Data.(map[string]interface{}); ok {
+		if id, ok := data["id"].(string); ok {
+			return id
+		}
 	}
 
 	return ""
