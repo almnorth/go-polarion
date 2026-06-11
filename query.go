@@ -51,6 +51,9 @@ type FieldSelector struct {
 	// LinkedWorkItems specifies which linked work item fields to include
 	LinkedWorkItems string
 
+	// ExternallyLinkedWorkItems specifies which external work item link fields to include
+	ExternallyLinkedWorkItems string
+
 	// BacklinkedWorkItems specifies which backlinked work item fields to include
 	BacklinkedWorkItems string
 
@@ -71,18 +74,20 @@ var (
 
 	// FieldsAll requests all available fields
 	FieldsAll = &FieldSelector{
-		WorkItems:           "@all",
-		LinkedWorkItems:     "@all",
-		BacklinkedWorkItems: "@all",
-		WorkItemAttachments: "@all",
+		WorkItems:                 "@all",
+		LinkedWorkItems:           "@all",
+		ExternallyLinkedWorkItems: "@all",
+		BacklinkedWorkItems:       "@all",
+		WorkItemAttachments:       "@all",
 	}
 
 	// FieldsDefault requests basic fields plus essential relationship data
 	FieldsDefault = &FieldSelector{
-		WorkItems:           "@basic",
-		LinkedWorkItems:     "id,role,suspect",
-		BacklinkedWorkItems: "id,role,suspect",
-		WorkItemAttachments: "@basic",
+		WorkItems:                 "@basic",
+		LinkedWorkItems:           "id,role,suspect",
+		ExternallyLinkedWorkItems: "id,role,workItemURI",
+		BacklinkedWorkItems:       "id,role,suspect",
+		WorkItemAttachments:       "@basic",
 	}
 )
 
@@ -100,6 +105,12 @@ func (fs *FieldSelector) WithWorkItemFields(fields string) *FieldSelector {
 // WithLinkedWorkItemFields sets the linked work item fields to include.
 func (fs *FieldSelector) WithLinkedWorkItemFields(fields string) *FieldSelector {
 	fs.LinkedWorkItems = fields
+	return fs
+}
+
+// WithExternallyLinkedWorkItemFields sets the external work item link fields to include.
+func (fs *FieldSelector) WithExternallyLinkedWorkItemFields(fields string) *FieldSelector {
+	fs.ExternallyLinkedWorkItems = fields
 	return fs
 }
 
@@ -128,6 +139,9 @@ func (fs *FieldSelector) ToQueryParams(params url.Values) {
 	}
 	if linkedWorkItemFields != "" {
 		params.Set("fields[linkedworkitems]", linkedWorkItemFields)
+	}
+	if fs.ExternallyLinkedWorkItems != "" {
+		params.Set("fields[externallylinkedworkitems]", fs.ExternallyLinkedWorkItems)
 	}
 	if fs.WorkItemAttachments != "" {
 		params.Set("fields[workitem_attachments]", fs.WorkItemAttachments)

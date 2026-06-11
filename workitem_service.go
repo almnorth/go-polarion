@@ -88,9 +88,10 @@ func (s *WorkItemService) Get(ctx context.Context, id string, opts ...GetOption)
 
 	includeLinkedWorkItems := includesRelationship(options.include, "linkedWorkItems")
 	includeBacklinkedWorkItems := includesRelationship(options.include, "backlinkedWorkItems")
-	if len(response.Included) > 0 && (includeLinkedWorkItems || includeBacklinkedWorkItems) {
+	includeExternallyLinkedWorkItems := includesRelationship(options.include, "externallyLinkedWorkItems")
+	if len(response.Included) > 0 && (includeLinkedWorkItems || includeBacklinkedWorkItems || includeExternallyLinkedWorkItems) {
 		items := []WorkItem{response.Data}
-		parseIncludedWorkItemLinks(items, response.Included, includeLinkedWorkItems, includeBacklinkedWorkItems)
+		parseIncludedWorkItemLinks(items, response.Included, includeLinkedWorkItems, includeBacklinkedWorkItems, includeExternallyLinkedWorkItems)
 		response.Data = items[0]
 	}
 
@@ -174,14 +175,16 @@ func (s *WorkItemService) Query(ctx context.Context, opts QueryOptions) (*PageRe
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
 
-	// Parse included linked work item resources and wire them to the correct work
-	// items. Polarion returns both linkedWorkItems and backlinkedWorkItems as
-	// "linkedworkitems" resources; the owning work item differs based on whether
-	// the link should be attached by its primary or secondary work item ID.
+	// Parse included resources and wire them to the correct work items. Polarion
+	// returns both linkedWorkItems and backlinkedWorkItems as "linkedworkitems"
+	// resources (the owning work item differs based on whether the link should be
+	// attached by its primary or secondary work item ID) and external links as
+	// "externallylinkedworkitems" resources.
 	includeLinkedWorkItems := includesRelationship(opts.Include, "linkedWorkItems")
 	includeBacklinkedWorkItems := includesRelationship(opts.Include, "backlinkedWorkItems")
-	if len(response.Included) > 0 && (includeLinkedWorkItems || includeBacklinkedWorkItems) {
-		parseIncludedWorkItemLinks(response.Data, response.Included, includeLinkedWorkItems, includeBacklinkedWorkItems)
+	includeExternallyLinkedWorkItems := includesRelationship(opts.Include, "externallyLinkedWorkItems")
+	if len(response.Included) > 0 && (includeLinkedWorkItems || includeBacklinkedWorkItems || includeExternallyLinkedWorkItems) {
+		parseIncludedWorkItemLinks(response.Data, response.Included, includeLinkedWorkItems, includeBacklinkedWorkItems, includeExternallyLinkedWorkItems)
 	}
 
 	return &PageResult{
@@ -218,7 +221,7 @@ func secondaryWorkItemIDFromLinkID(linkID string) string {
 	return parts[len(parts)-1]
 }
 
-func parseIncludedWorkItemLinks(items []WorkItem, included []json.RawMessage, includeLinkedWorkItems, includeBacklinkedWorkItems bool) {
+func parseIncludedWorkItemLinks(items []WorkItem, included []json.RawMessage, includeLinkedWorkItems, includeBacklinkedWorkItems, includeExternallyLinkedWorkItems bool) {
 	// Build an index from work item short ID to slice position for O(1) lookup.
 	wiIndex := make(map[string]int, len(items))
 	for i, wi := range items {
@@ -237,28 +240,42 @@ func parseIncludedWorkItemLinks(items []WorkItem, included []json.RawMessage, in
 		if err := json.Unmarshal(raw, &typeCheck); err != nil {
 			continue
 		}
-		if typeCheck.Type != "linkedworkitems" {
-			continue
-		}
 
-		var link WorkItemLink
-		if err := json.Unmarshal(raw, &link); err != nil {
-			continue
-		}
+		switch typeCheck.Type {
+		case "linkedworkitems":
+			var link WorkItemLink
+			if err := json.Unmarshal(raw, &link); err != nil {
+				continue
+			}
 
-		if includeLinkedWorkItems {
+			if includeLinkedWorkItems {
+				primaryShortID := primaryWorkItemIDFromLinkID(typeCheck.ID)
+				if i, ok := wiIndex[primaryShortID]; ok {
+					items[i].LinkedWorkItemsInline = append(items[i].LinkedWorkItemsInline, link)
+				}
+			}
+
+			if includeBacklinkedWorkItems {
+				// Use the link ID instead of relationships.workItem because Polarion
+				// changed the meaning of workItem for included backlinks in 2512.
+				secondaryShortID := secondaryWorkItemIDFromLinkID(typeCheck.ID)
+				if i, ok := wiIndex[secondaryShortID]; ok {
+					items[i].BacklinkedWorkItemsInline = append(items[i].BacklinkedWorkItemsInline, link)
+				}
+			}
+
+		case "externallylinkedworkitems":
+			if !includeExternallyLinkedWorkItems {
+				continue
+			}
+			var link WorkItemExternalLink
+			if err := json.Unmarshal(raw, &link); err != nil {
+				continue
+			}
+			// External links use the same "proj/primaryWI/..." prefix pattern.
 			primaryShortID := primaryWorkItemIDFromLinkID(typeCheck.ID)
 			if i, ok := wiIndex[primaryShortID]; ok {
-				items[i].LinkedWorkItemsInline = append(items[i].LinkedWorkItemsInline, link)
-			}
-		}
-
-		if includeBacklinkedWorkItems {
-			// Use the link ID instead of relationships.workItem because Polarion
-			// changed the meaning of workItem for included backlinks in 2512.
-			secondaryShortID := secondaryWorkItemIDFromLinkID(typeCheck.ID)
-			if i, ok := wiIndex[secondaryShortID]; ok {
-				items[i].BacklinkedWorkItemsInline = append(items[i].BacklinkedWorkItemsInline, link)
+				items[i].ExternallyLinkedWorkItemsInline = append(items[i].ExternallyLinkedWorkItemsInline, link)
 			}
 		}
 	}

@@ -41,6 +41,11 @@ type WorkItem struct {
 	// from marshaling.
 	LinkedWorkItemsInline []WorkItemLink `json:"-"`
 
+	// ExternallyLinkedWorkItemsInline holds embedded externally linked work items
+	// returned via include=externallyLinkedWorkItems. This field is excluded from
+	// marshaling because it is not part of the primary work item payload.
+	ExternallyLinkedWorkItemsInline []WorkItemExternalLink `json:"-"`
+
 	// BacklinkedWorkItemsInline holds the backlinks that were embedded inline in
 	// the API response when the query was made with WithInclude("backlinkedWorkItems").
 	// This field is populated only when the include parameter was used; it does not

@@ -187,6 +187,33 @@ func Example_workItemLinks() {
 	fmt.Println("Link created")
 }
 
+// Example_workItemExternalLinks demonstrates working with externally linked work items.
+func Example_workItemExternalLinks() {
+	client, _ := polarion.New("https://polarion.example.com/rest/v1", "token")
+	project := client.Project("my-project")
+	ctx := context.Background()
+
+	links, err := project.WorkItemExternalLinks.List(ctx, "WI-123")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Found %d external links\n", len(links))
+	for _, link := range links {
+		fmt.Printf("  Link: %s -> %s\n", link.Attributes.Role, link.Attributes.WorkItemURI)
+	}
+
+	link := polarion.NewWorkItemExternalLink(
+		"relates_to",
+		"https://remote.example.com/polarion/#/project/OTHER/workitem?id=WI-456",
+	)
+	err = project.WorkItemExternalLinks.Create(ctx, "WI-123", link)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("External link created")
+}
+
 // Example_workItemTypes demonstrates working with work item type definitions.
 func Example_workItemTypes() {
 	client, _ := polarion.New("https://polarion.example.com/rest/v1", "token")

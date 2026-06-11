@@ -130,11 +130,49 @@ err = project.WorkItems.Create(ctx, item1, item2, item3)
 wi.Attributes.Status = "approved"
 err = project.WorkItems.Update(ctx, wi)
 
+// List externally linked work items on a work item
+externalLinks, err := project.WorkItemExternalLinks.List(ctx, "WI-123")
+if err != nil {
+    log.Fatal(err)
+}
+for _, link := range externalLinks {
+    fmt.Printf("%s -> %s\n", link.Attributes.Role, link.Attributes.WorkItemURI)
+}
+
 // Delete work items
 err = project.WorkItems.Delete(ctx, "WI-123", "WI-124")
 ```
 
 [→ Full Work Items Documentation](docs/API-REFERENCE.md#work-items)
+
+### Externally Linked Work Items
+
+Native support for Polarion's `externallylinkedworkitems` resource is available
+through `project.WorkItemExternalLinks`:
+
+```go
+link := polarion.NewWorkItemExternalLink(
+    "relates_to",
+    "https://remote.example.com/polarion/#/project/OTHER/workitem?id=WI-456",
+)
+
+err := project.WorkItemExternalLinks.Create(ctx, "WI-123", link)
+if err != nil {
+    log.Fatal(err)
+}
+
+links, err := project.WorkItemExternalLinks.List(
+    ctx,
+    "WI-123",
+    polarion.WithFields(
+        polarion.NewFieldSelector().
+            WithExternallyLinkedWorkItemFields("id,role,workItemURI"),
+    ),
+)
+if err != nil {
+    log.Fatal(err)
+}
+```
 
 ### Type-Safe Custom Fields
 
