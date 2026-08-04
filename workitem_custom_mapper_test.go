@@ -4,6 +4,8 @@
 package polarion
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,6 +23,35 @@ type TestCustomWorkItem struct {
 	TextField     *TextContent `json:"textField"`
 	IgnoredField  *string      // No JSON tag - should be ignored
 	SkippedField  *string      `json:"-"` // Explicitly skipped
+}
+
+// testPlatform is a named string type, used to verify that multi-value fields
+// support named element types (e.g. generated enum constants).
+type testPlatform string
+
+// testPosition is a named int64 type, used to verify that named numeric types work.
+type testPosition int64
+
+// Test struct covering the numeric widths a Polarion integer field can be mapped to
+type TestNumericWorkItem struct {
+	Int64Field    *int64        `json:"int64Field"`
+	Int32Field    *int32        `json:"int32Field"`
+	Int16Field    *int16        `json:"int16Field"`
+	Int8Field     *int8         `json:"int8Field"`
+	IntField      *int          `json:"intField"`
+	UintField     *uint         `json:"uintField"`
+	Uint64Field   *uint64       `json:"uint64Field"`
+	Float32Field  *float32      `json:"float32Field"`
+	Float64Field  *float64      `json:"float64Field"`
+	PositionField *testPosition `json:"positionField"`
+}
+
+// Test struct for multi-value fields (multi-enumeration, multi-value string)
+type TestMultiValueWorkItem struct {
+	MultiEnumField  []string       `json:"multiEnumField"`
+	NamedEnumField  []testPlatform `json:"namedEnumField"`
+	PointerToSlice  *[]string      `json:"pointerToSlice"`
+	SingleEnumField *string        `json:"singleEnumField"`
 }
 
 func TestLoadCustomFields(t *testing.T) {
@@ -122,6 +153,289 @@ func TestLoadCustomFields(t *testing.T) {
 	}
 	if custom.SkippedField != nil {
 		t.Error("SkippedField: expected nil (json:\"-\")")
+	}
+}
+
+func TestLoadCustomFields_NumericWidths(t *testing.T) {
+	// Polarion integers arrive as JSON numbers, which unmarshal to float64
+	wi := &WorkItem{
+		ID:   "TEST-123",
+		Type: "workitems",
+		Attributes: &WorkItemAttributes{
+			Title: "Test Work Item",
+			CustomFields: map[string]interface{}{
+				"int64Field":    float64(9007199254740992),
+				"int32Field":    float64(2147483647),
+				"int16Field":    float64(-32768),
+				"int8Field":     float64(127),
+				"intField":      float64(42),
+				"uintField":     float64(7),
+				"uint64Field":   float64(18446744073709551615 >> 12),
+				"float32Field":  float64(3.5),
+				"float64Field":  float64(3.14),
+				"positionField": float64(1234567890123),
+			},
+		},
+	}
+
+	custom := &TestNumericWorkItem{}
+	if err := LoadCustomFields(wi, custom); err != nil {
+		t.Fatalf("LoadCustomFields failed: %v", err)
+	}
+
+	if custom.Int64Field == nil || *custom.Int64Field != 9007199254740992 {
+		t.Errorf("Int64Field: expected 9007199254740992, got %v", custom.Int64Field)
+	}
+	if custom.Int32Field == nil || *custom.Int32Field != 2147483647 {
+		t.Errorf("Int32Field: expected 2147483647, got %v", custom.Int32Field)
+	}
+	if custom.Int16Field == nil || *custom.Int16Field != -32768 {
+		t.Errorf("Int16Field: expected -32768, got %v", custom.Int16Field)
+	}
+	if custom.Int8Field == nil || *custom.Int8Field != 127 {
+		t.Errorf("Int8Field: expected 127, got %v", custom.Int8Field)
+	}
+	if custom.IntField == nil || *custom.IntField != 42 {
+		t.Errorf("IntField: expected 42, got %v", custom.IntField)
+	}
+	if custom.UintField == nil || *custom.UintField != 7 {
+		t.Errorf("UintField: expected 7, got %v", custom.UintField)
+	}
+	if custom.Uint64Field == nil {
+		t.Error("Uint64Field: expected non-nil value")
+	}
+	if custom.Float32Field == nil || *custom.Float32Field != 3.5 {
+		t.Errorf("Float32Field: expected 3.5, got %v", custom.Float32Field)
+	}
+	if custom.Float64Field == nil || *custom.Float64Field != 3.14 {
+		t.Errorf("Float64Field: expected 3.14, got %v", custom.Float64Field)
+	}
+	if custom.PositionField == nil || *custom.PositionField != 1234567890123 {
+		t.Errorf("PositionField: expected 1234567890123, got %v", custom.PositionField)
+	}
+}
+
+func TestLoadCustomFields_NumericOverflow(t *testing.T) {
+	// A value that does not fit the target type must error rather than truncate
+	wi := &WorkItem{
+		ID:   "TEST-123",
+		Type: "workitems",
+		Attributes: &WorkItemAttributes{
+			Title: "Test Work Item",
+			CustomFields: map[string]interface{}{
+				"int8Field": float64(300),
+			},
+		},
+	}
+
+	if err := LoadCustomFields(wi, &TestNumericWorkItem{}); err == nil {
+		t.Error("expected an overflow error for 300 into *int8")
+	}
+
+	// Same for a negative value in an unsigned field
+	wi.Attributes.CustomFields = map[string]interface{}{"uintField": float64(-1)}
+	if err := LoadCustomFields(wi, &TestNumericWorkItem{}); err == nil {
+		t.Error("expected an error for -1 into *uint")
+	}
+}
+
+func TestSaveCustomFields_NumericWidths(t *testing.T) {
+	wi := &WorkItem{
+		ID:   "TEST-123",
+		Type: "workitems",
+		Attributes: &WorkItemAttributes{
+			Title:        "Test Work Item",
+			CustomFields: make(map[string]interface{}),
+		},
+	}
+
+	int64Val := int64(9007199254740993) // Not representable as float64
+	uintVal := uint(7)
+	float32Val := float32(3.5)
+	positionVal := testPosition(1234567890123)
+
+	custom := &TestNumericWorkItem{
+		Int64Field:    &int64Val,
+		UintField:     &uintVal,
+		Float32Field:  &float32Val,
+		PositionField: &positionVal,
+	}
+
+	if err := SaveCustomFields(wi, custom); err != nil {
+		t.Fatalf("SaveCustomFields failed: %v", err)
+	}
+
+	cf := CustomFields(wi.Attributes.CustomFields)
+
+	// Integers are stored as int64, so exact large values survive the round-trip
+	if val, ok := cf.GetInt64("int64Field"); !ok || val != int64Val {
+		t.Errorf("int64Field: expected %d, got %d (ok=%t)", int64Val, val, ok)
+	}
+	if val, ok := cf.GetInt64("uintField"); !ok || val != 7 {
+		t.Errorf("uintField: expected 7, got %d (ok=%t)", val, ok)
+	}
+	if val, ok := cf.GetFloat("float32Field"); !ok || val != 3.5 {
+		t.Errorf("float32Field: expected 3.5, got %v (ok=%t)", val, ok)
+	}
+	if val, ok := cf.GetInt64("positionField"); !ok || val != 1234567890123 {
+		t.Errorf("positionField: expected 1234567890123, got %d (ok=%t)", val, ok)
+	}
+
+	// The payload must carry plain JSON numbers
+	data, err := json.Marshal(wi.Attributes)
+	if err != nil {
+		t.Fatalf("marshaling attributes failed: %v", err)
+	}
+	if !strings.Contains(string(data), `"int64Field":9007199254740993`) {
+		t.Errorf("expected int64Field to marshal as an exact JSON number, got: %s", data)
+	}
+}
+
+func TestLoadCustomFields_MultiValue(t *testing.T) {
+	// Values as they arrive from the API: JSON arrays unmarshal to []interface{}
+	wi := &WorkItem{
+		ID:   "TEST-123",
+		Type: "workitems",
+		Attributes: &WorkItemAttributes{
+			Title: "Test Work Item",
+			CustomFields: map[string]interface{}{
+				"multiEnumField":  []interface{}{"opt1", "opt2"},
+				"namedEnumField":  []interface{}{"linux", "windows"},
+				"pointerToSlice":  []string{"a", "b"},
+				"singleEnumField": "opt1",
+			},
+		},
+	}
+
+	custom := &TestMultiValueWorkItem{}
+	if err := LoadCustomFields(wi, custom); err != nil {
+		t.Fatalf("LoadCustomFields failed: %v", err)
+	}
+
+	if len(custom.MultiEnumField) != 2 || custom.MultiEnumField[0] != "opt1" || custom.MultiEnumField[1] != "opt2" {
+		t.Errorf("MultiEnumField: expected [opt1 opt2], got %v", custom.MultiEnumField)
+	}
+
+	if len(custom.NamedEnumField) != 2 || custom.NamedEnumField[0] != "linux" || custom.NamedEnumField[1] != "windows" {
+		t.Errorf("NamedEnumField: expected [linux windows], got %v", custom.NamedEnumField)
+	}
+
+	if custom.PointerToSlice == nil {
+		t.Error("PointerToSlice: expected non-nil value")
+	} else if len(*custom.PointerToSlice) != 2 || (*custom.PointerToSlice)[0] != "a" {
+		t.Errorf("PointerToSlice: expected [a b], got %v", *custom.PointerToSlice)
+	}
+
+	if custom.SingleEnumField == nil || *custom.SingleEnumField != "opt1" {
+		t.Errorf("SingleEnumField: expected 'opt1', got %v", custom.SingleEnumField)
+	}
+}
+
+func TestLoadCustomFields_MultiValueSingleString(t *testing.T) {
+	// A multi-value field may come back as a plain string when it holds one value
+	wi := &WorkItem{
+		ID:   "TEST-123",
+		Type: "workitems",
+		Attributes: &WorkItemAttributes{
+			Title: "Test Work Item",
+			CustomFields: map[string]interface{}{
+				"multiEnumField": "opt1",
+			},
+		},
+	}
+
+	custom := &TestMultiValueWorkItem{}
+	if err := LoadCustomFields(wi, custom); err != nil {
+		t.Fatalf("LoadCustomFields failed: %v", err)
+	}
+
+	if len(custom.MultiEnumField) != 1 || custom.MultiEnumField[0] != "opt1" {
+		t.Errorf("MultiEnumField: expected [opt1], got %v", custom.MultiEnumField)
+	}
+}
+
+func TestSaveCustomFields_MultiValue(t *testing.T) {
+	wi := &WorkItem{
+		ID:   "TEST-123",
+		Type: "workitems",
+		Attributes: &WorkItemAttributes{
+			Title:        "Test Work Item",
+			CustomFields: make(map[string]interface{}),
+		},
+	}
+
+	singleVal := "opt1"
+	pointerSlice := []string{"a", "b"}
+	custom := &TestMultiValueWorkItem{
+		MultiEnumField:  []string{"opt1", "opt2"},
+		NamedEnumField:  []testPlatform{"linux"},
+		PointerToSlice:  &pointerSlice,
+		SingleEnumField: &singleVal,
+	}
+
+	if err := SaveCustomFields(wi, custom); err != nil {
+		t.Fatalf("SaveCustomFields failed: %v", err)
+	}
+
+	cf := CustomFields(wi.Attributes.CustomFields)
+
+	if val, ok := cf.GetEnums("multiEnumField"); !ok || len(val) != 2 || val[0] != "opt1" || val[1] != "opt2" {
+		t.Errorf("multiEnumField: expected [opt1 opt2], got %v", val)
+	}
+
+	if val, ok := cf.GetStringSlice("namedEnumField"); !ok || len(val) != 1 || val[0] != "linux" {
+		t.Errorf("namedEnumField: expected [linux], got %v", val)
+	}
+
+	if val, ok := cf.GetStringSlice("pointerToSlice"); !ok || len(val) != 2 || val[0] != "a" {
+		t.Errorf("pointerToSlice: expected [a b], got %v", val)
+	}
+
+	// Verify the stored value marshals to a JSON array, which is what Polarion expects
+	data, err := json.Marshal(wi.Attributes)
+	if err != nil {
+		t.Fatalf("marshaling attributes failed: %v", err)
+	}
+	if !strings.Contains(string(data), `"multiEnumField":["opt1","opt2"]`) {
+		t.Errorf("expected multiEnumField to marshal as a JSON array, got: %s", data)
+	}
+}
+
+func TestSaveCustomFields_MultiValueNilAndEmpty(t *testing.T) {
+	wi := &WorkItem{
+		ID:   "TEST-123",
+		Type: "workitems",
+		Attributes: &WorkItemAttributes{
+			Title: "Test Work Item",
+			CustomFields: map[string]interface{}{
+				"multiEnumField": []string{"opt1"},
+				"namedEnumField": []string{"linux"},
+			},
+		},
+	}
+
+	// nil slice removes the field; empty non-nil slice clears it in Polarion
+	custom := &TestMultiValueWorkItem{
+		MultiEnumField: nil,
+		NamedEnumField: []testPlatform{},
+	}
+
+	if err := SaveCustomFields(wi, custom); err != nil {
+		t.Fatalf("SaveCustomFields failed: %v", err)
+	}
+
+	cf := CustomFields(wi.Attributes.CustomFields)
+
+	if cf.Has("multiEnumField") {
+		t.Error("multiEnumField: expected to be deleted for a nil slice")
+	}
+
+	val, ok := cf.GetStringSlice("namedEnumField")
+	if !ok {
+		t.Error("namedEnumField: expected to be present for an empty slice")
+	}
+	if len(val) != 0 {
+		t.Errorf("namedEnumField: expected empty slice, got %v", val)
 	}
 }
 

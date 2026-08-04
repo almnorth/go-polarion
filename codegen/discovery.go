@@ -36,6 +36,10 @@ type FieldInfo struct {
 	// EnumValues are the valid values for enum fields (if available)
 	EnumValues []string
 
+	// MultiValue indicates the field holds multiple values (e.g. multi-enumeration).
+	// Multi-value fields are generated as []string.
+	MultiValue bool
+
 	// IsRequired indicates if the field is required
 	IsRequired bool
 
@@ -108,10 +112,11 @@ func (d *Discoverer) convertField(fieldID string, meta polarion.FieldMetadata) F
 		Kind:        kind,
 		Description: meta.Label,
 		EnumName:    meta.Type.EnumName,
+		MultiValue:  meta.Type.IsMulti(),
 	}
 
 	// Map Polarion field kind to Go type
-	field.GoType = mapFieldKindToGoType(kind)
+	field.GoType = mapFieldKindToGoType(kind, field.MultiValue)
 
 	// If this is a table field, extract column definitions from custom field config
 	if kind == polarion.FieldKindTable && d.customFieldDef != nil {
@@ -133,8 +138,19 @@ func (d *Discoverer) convertField(fieldID string, meta polarion.FieldMetadata) F
 	return field
 }
 
-// mapFieldKindToGoType maps a Polarion field kind to a Go type
-func mapFieldKindToGoType(kind polarion.FieldKind) string {
+// mapFieldKindToGoType maps a Polarion field kind to a Go type.
+// When multiValue is set, string-like kinds are generated as []string, which is
+// what LoadCustomFields/SaveCustomFields expect for multi-value fields.
+func mapFieldKindToGoType(kind polarion.FieldKind, multiValue bool) string {
+	if multiValue {
+		switch kind {
+		case polarion.FieldKindString, polarion.FieldKindEnumeration:
+			return "[]string" // Multi-value fields are JSON arrays of values/option IDs
+		default:
+			fmt.Printf("  ⚠ Warning: multi-value field kind '%s' is not supported, generating single-value type\n", kind)
+		}
+	}
+
 	switch kind {
 	case polarion.FieldKindString:
 		return "*string"

@@ -43,9 +43,12 @@ func (c *client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 	// Add authentication header
 	req.Header.Set("Authorization", "Bearer "+c.bearerToken)
 
-	// Set JSON headers if not already set
+	// Set JSON headers if not already set.
+	// The charset parameter is required: without it Polarion's servlet container
+	// falls back to ISO-8859-1 and mangles non-ASCII text (e.g. "Wärtsilä" is
+	// stored as "WÃ¤rtsilÃ¤").
 	if req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	}
 	if req.Header.Get("Accept") == "" {
 		req.Header.Set("Accept", "application/json")

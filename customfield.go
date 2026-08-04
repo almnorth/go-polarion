@@ -76,6 +76,18 @@ type CustomFieldType struct {
 	// EnumContext is the enumeration context for enumeration fields
 	EnumContext string `json:"enumContext,omitempty"`
 
+	// Multi indicates the field holds multiple values (e.g. a multi-enumeration
+	// field, serialized as a JSON array of option IDs).
+	// Polarion is inconsistent about the JSON key across versions, so both "multi"
+	// and "multiValue" are accepted — use IsMulti() instead of reading these directly.
+	// Note that this flag is not exposed by every Polarion version; when it is
+	// absent, a multi-value field is indistinguishable from a single-value one in
+	// the metadata and must be handled explicitly by the caller.
+	Multi bool `json:"multi,omitempty"`
+
+	// MultiValue is an alternative spelling of Multi used by some Polarion versions.
+	MultiValue bool `json:"multiValue,omitempty"`
+
 	// StructureName is the structure name for structure fields (e.g., "Table")
 	StructureName string `json:"structureName,omitempty"`
 
@@ -84,6 +96,14 @@ type CustomFieldType struct {
 
 	// Role is the relationship role for relationship fields
 	Role string `json:"role,omitempty"`
+}
+
+// IsMulti reports whether the field holds multiple values, accounting for both
+// JSON keys Polarion has used ("multi" and "multiValue").
+// Multi-value fields are read/written with CustomFields.GetEnums/SetEnums
+// (or GetStringSlice/SetStringSlice) and map to []string in custom work item structs.
+func (t CustomFieldType) IsMulti() bool {
+	return t.Multi || t.MultiValue
 }
 
 // CustomFieldParameter represents a parameter for a custom field.

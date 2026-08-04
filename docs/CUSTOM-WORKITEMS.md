@@ -398,6 +398,7 @@ func (r *Requirement) SaveToWorkItem() error {
 
 The automatic mapper supports all custom field types:
 - `*string` - for string and enum fields
+- `[]string` (or `*[]string`) - for multi-value string and multi-enumeration fields
 - `*int` - for integer fields
 - `*float64` - for float fields
 - `*bool` - for boolean fields
@@ -490,15 +491,22 @@ if req.BusinessValue != nil {
 
 ### Integer Fields
 
-Used for whole numbers.
+Used for whole numbers. Any Go integer width works — `*int`, `*int8`, `*int16`,
+`*int32`, `*int64`, and the unsigned variants — as do named types such as
+`*ScopePosition` (defined as `type ScopePosition int64`). Use `*int64` for values
+beyond the 32-bit range.
 
 ```go
 // Definition
-ItemCount *int
+ItemCount     *int
+ScopePosition *int64
 
 // Loading
 if val, ok := cf.GetInt("itemCount"); ok {
     r.ItemCount = &val
+}
+if val, ok := cf.GetInt64("scopePosition"); ok {
+    r.ScopePosition = &val
 }
 
 // Saving
@@ -506,6 +514,17 @@ if r.ItemCount != nil {
     cf.Set("itemCount", *r.ItemCount)
 }
 ```
+
+Polarion returns integers as JSON numbers, which `encoding/json` unmarshals to
+`float64`. `GetInt64` converts gracefully from any representation: all signed and
+unsigned integer types, `float32`/`float64` (truncated toward zero), `json.Number`,
+and numeric strings. `GetInt` does the same but reports `false` for a value that
+does not fit an `int`.
+
+`LoadCustomFields` reports an error instead of silently corrupting data when a value
+does not fit the target field (overflow, or a negative value in an unsigned field).
+On save, integers are stored as `int64`, so values above 2^53 round-trip exactly
+rather than losing precision through `float64`.
 
 ### Float Fields
 
@@ -648,6 +667,62 @@ req.EstimatedEffort = &duration
 // Parsing
 duration, err := polarion.ParseDuration("2d 3h 30m")
 ```
+
+### Multi-Enumeration Fields
+
+Used for enumeration fields that accept several options at once, and for multi-value
+string fields. Polarion serializes them as a JSON array of enumeration option IDs:
+
+```json
+{"affectedPlatforms": ["linux", "windows"]}
+```
+
+Declare them as `[]string` (a named string element type such as `[]Platform` also
+works, as does `*[]string`):
+
+```go
+// Definition
+AffectedPlatforms []string `json:"affectedPlatforms,omitempty"`
+
+// Loading (handled by LoadCustomFields, or directly)
+if vals, ok := cf.GetEnums("affectedPlatforms"); ok {
+    r.AffectedPlatforms = vals
+}
+
+// Saving (handled by SaveCustomFields, or directly)
+cf.SetEnums("affectedPlatforms", r.AffectedPlatforms)
+
+// Creating
+req.AffectedPlatforms = []string{"linux", "windows"}
+```
+
+Semantics:
+
+| Go value | Result |
+|----------|--------|
+| `nil` slice | Field is removed from the payload — Polarion leaves it untouched |
+| `[]string{}` | `[]` is sent — clears the field in Polarion |
+| `[]string{"a", "b"}` | `["a", "b"]` is sent |
+
+`GetEnums` (alias of `GetStringSlice`) tolerates all shapes Polarion returns: a JSON
+array, a `[]string` you set yourself, and a bare string (yielding a single-element
+slice). `GetEnum`/`GetString` return `false` for a multi-enumeration field, since a
+single `string` cannot represent several values.
+
+Values are enumeration **option IDs**, not display names. Look them up with the
+enumerations service:
+
+```go
+enum, err := client.Enumerations.Get(ctx, "project", "platform-enum", "~")
+for _, opt := range enum.Attributes.Options {
+    fmt.Println(opt.ID)
+}
+```
+
+**Note on metadata**: not every Polarion version reports the multi-value flag in the
+fields metadata (`CustomFieldType.IsMulti()`). When it is missing, the code generator
+cannot tell a multi-enumeration field from a single-enumeration one and will generate
+`*string`; change the generated field to `[]string` by hand in that case.
 
 ### User Reference Fields
 

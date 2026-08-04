@@ -204,6 +204,31 @@ project.WorkItems.Update(ctx, req.base)
 
 [→ Custom Work Items Guide](docs/CUSTOM-WORKITEMS.md)
 
+### Multi-Enumeration Custom Fields
+
+Multi-value custom fields (multi-enumeration, multi-value string) are JSON arrays of option IDs. Use `[]string` in a custom work item type, or the `GetEnums`/`SetEnums` accessors on the raw map:
+
+```go
+type Defect struct {
+    base              *polarion.WorkItem
+    AffectedPlatforms []string `json:"affectedPlatforms,omitempty"` // Multi-enumeration
+}
+
+item := &Defect{base: wi}
+item.AffectedPlatforms = []string{"linux", "windows"}
+polarion.SaveCustomFields(item.base, item)
+// → "affectedPlatforms": ["linux", "windows"]
+
+// Or directly on the custom fields map
+cf := polarion.CustomFields(wi.Attributes.CustomFields)
+cf.SetEnums("affectedPlatforms", []string{"linux", "windows"})
+if options, ok := cf.GetEnums("affectedPlatforms"); ok {
+    fmt.Println(options)
+}
+```
+
+A `nil` slice leaves the field untouched; an empty (non-nil) slice sends `[]`, which clears the field in Polarion. Values must be enumeration **option IDs** — look them up with `client.Enumerations.Get(...)`.
+
 ### User Reference Custom Fields
 
 User reference custom fields (fields that reference Polarion users) are stored as relationships, not attributes. The library handles this automatically with the `UserRef` type:

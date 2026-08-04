@@ -15,8 +15,10 @@ import (
 //
 // Supported field types:
 //   - *string (for string and enum fields)
-//   - *int (for integer fields)
-//   - *float64 (for float fields)
+//   - []string (for multi-value string and multi-enumeration fields)
+//   - *int, *int8, *int16, *int32, *int64 (for integer fields)
+//   - *uint, *uint8, *uint16, *uint32, *uint64 (for non-negative integer fields)
+//   - *float32, *float64 (for float and currency fields)
 //   - *bool (for boolean fields)
 //   - *DateOnly (for date fields)
 //   - *TimeOnly (for time fields)
@@ -27,6 +29,14 @@ import (
 //   - *UserRef (for single user reference fields - stored in relationships)
 //   - []UserRef (for multi-value user reference fields - stored in relationships)
 //
+// Named types with one of the kinds above are also supported (e.g. type Position int64,
+// type Platform string, []Platform).
+//
+// Values are converted gracefully: a Polarion integer arrives as a JSON number and is
+// accepted by any integer-width field, and a field whose Go type cannot hold the value
+// (overflow, or a negative value in an unsigned field) reports an error rather than
+// silently truncating.
+//
 // Note: UserRef fields are stored in Polarion's relationships section, not attributes.
 // This function automatically handles loading them from the correct location.
 //
@@ -36,6 +46,7 @@ import (
 //	    BusinessValue        *string           `json:"businessValue"`
 //	    TargetRelease        *DateOnly         `json:"targetRelease"`
 //	    ComplexityPoints     *float64          `json:"complexityPoints"`
+//	    AffectedPlatforms    []string          `json:"affectedPlatforms"` // Multi-enumeration
 //	    Purchaser            *polarion.UserRef `json:"purchaser"`   // Single user reference
 //	    BoardMembers            []polarion.UserRef `json:"BoardMembers"`  // Multi-value user reference
 //	}
@@ -173,6 +184,14 @@ func SaveCustomFields(wi *WorkItem, source interface{}) error {
 
 // loadField loads a single field from custom fields based on its type
 func loadField(cf CustomFields, field reflect.Value, fieldName string) error {
+	// Multi-value fields (multi-enumeration, multi-value string) map to string slices
+	if isStringSliceType(field.Type()) {
+		if vals, ok := cf.GetStringSlice(fieldName); ok {
+			field.Set(stringSliceToValue(field.Type(), vals))
+		}
+		return nil
+	}
+
 	if field.Kind() != reflect.Ptr {
 		return fmt.Errorf("field must be a pointer type")
 	}
@@ -180,28 +199,66 @@ func loadField(cf CustomFields, field reflect.Value, fieldName string) error {
 	// Get the element type
 	elemType := field.Type().Elem()
 
+	// Pointer to a string slice (*[]string) is also accepted for multi-value fields
+	if isStringSliceType(elemType) {
+		if vals, ok := cf.GetStringSlice(fieldName); ok {
+			ptr := reflect.New(elemType)
+			ptr.Elem().Set(stringSliceToValue(elemType, vals))
+			field.Set(ptr)
+		}
+		return nil
+	}
+
 	switch elemType.Kind() {
 	case reflect.String:
 		if val, ok := cf.GetString(fieldName); ok {
-			field.Set(reflect.ValueOf(&val))
+			ptr := reflect.New(elemType)
+			ptr.Elem().SetString(val)
+			field.Set(ptr)
 		}
 		return nil
 
-	case reflect.Int:
-		if val, ok := cf.GetInt(fieldName); ok {
-			field.Set(reflect.ValueOf(&val))
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if val, ok := cf.GetInt64(fieldName); ok {
+			ptr := reflect.New(elemType)
+			if ptr.Elem().OverflowInt(val) {
+				return fmt.Errorf("value %d overflows %s", val, elemType)
+			}
+			ptr.Elem().SetInt(val)
+			field.Set(ptr)
 		}
 		return nil
 
-	case reflect.Float64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if val, ok := cf.GetInt64(fieldName); ok {
+			if val < 0 {
+				return fmt.Errorf("negative value %d cannot be stored in %s", val, elemType)
+			}
+			ptr := reflect.New(elemType)
+			if ptr.Elem().OverflowUint(uint64(val)) {
+				return fmt.Errorf("value %d overflows %s", val, elemType)
+			}
+			ptr.Elem().SetUint(uint64(val))
+			field.Set(ptr)
+		}
+		return nil
+
+	case reflect.Float32, reflect.Float64:
 		if val, ok := cf.GetFloat(fieldName); ok {
-			field.Set(reflect.ValueOf(&val))
+			ptr := reflect.New(elemType)
+			if ptr.Elem().OverflowFloat(val) {
+				return fmt.Errorf("value %v overflows %s", val, elemType)
+			}
+			ptr.Elem().SetFloat(val)
+			field.Set(ptr)
 		}
 		return nil
 
 	case reflect.Bool:
 		if val, ok := cf.GetBool(fieldName); ok {
-			field.Set(reflect.ValueOf(&val))
+			ptr := reflect.New(elemType)
+			ptr.Elem().SetBool(val)
+			field.Set(ptr)
 		}
 		return nil
 
@@ -255,6 +312,18 @@ func loadField(cf CustomFields, field reflect.Value, fieldName string) error {
 
 // saveField saves a single field to custom fields based on its type
 func saveField(cf CustomFields, field reflect.Value, fieldName string) error {
+	// Multi-value fields (multi-enumeration, multi-value string) map to string slices.
+	// A nil slice removes the field; an empty non-nil slice stores an empty array,
+	// which clears the field in Polarion.
+	if isStringSliceType(field.Type()) {
+		if field.IsNil() {
+			cf.Delete(fieldName)
+			return nil
+		}
+		cf.SetStringSlice(fieldName, valueToStringSlice(field))
+		return nil
+	}
+
 	if field.Kind() != reflect.Ptr {
 		return fmt.Errorf("field must be a pointer type")
 	}
@@ -269,16 +338,31 @@ func saveField(cf CustomFields, field reflect.Value, fieldName string) error {
 	fieldValue := field.Elem()
 	elemType := field.Type().Elem()
 
+	// Pointer to a string slice (*[]string) is also accepted for multi-value fields
+	if isStringSliceType(elemType) {
+		if fieldValue.IsNil() {
+			cf.Delete(fieldName)
+			return nil
+		}
+		cf.SetStringSlice(fieldName, valueToStringSlice(fieldValue))
+		return nil
+	}
+
 	switch elemType.Kind() {
 	case reflect.String:
 		cf.Set(fieldName, fieldValue.String())
 		return nil
 
-	case reflect.Int:
-		cf.Set(fieldName, int(fieldValue.Int()))
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		// Stored as int64 so any integer width round-trips without truncation
+		cf.Set(fieldName, fieldValue.Int())
 		return nil
 
-	case reflect.Float64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		cf.Set(fieldName, fieldValue.Uint())
+		return nil
+
+	case reflect.Float32, reflect.Float64:
 		cf.Set(fieldName, fieldValue.Float())
 		return nil
 
@@ -326,6 +410,33 @@ func saveField(cf CustomFields, field reflect.Value, fieldName string) error {
 	default:
 		return fmt.Errorf("unsupported field type: %s", elemType.Kind())
 	}
+}
+
+// isStringSliceType reports whether t is a slice whose element kind is string,
+// e.g. []string or []MyEnumType. This is how Polarion multi-value custom fields
+// (multi-enumeration, multi-value string) are represented in Go.
+// []UserRef is excluded because its element kind is struct, not string.
+func isStringSliceType(t reflect.Type) bool {
+	return t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.String
+}
+
+// stringSliceToValue builds a reflect.Value of slice type t from a []string.
+// Named string element types (e.g. type Platform string) are supported.
+func stringSliceToValue(t reflect.Type, vals []string) reflect.Value {
+	slice := reflect.MakeSlice(t, len(vals), len(vals))
+	for i, val := range vals {
+		slice.Index(i).SetString(val)
+	}
+	return slice
+}
+
+// valueToStringSlice converts a reflect.Value of a string-kinded slice to []string.
+func valueToStringSlice(v reflect.Value) []string {
+	vals := make([]string, v.Len())
+	for i := 0; i < v.Len(); i++ {
+		vals[i] = v.Index(i).String()
+	}
+	return vals
 }
 
 // isUserRefField checks if a reflect.Value represents a *UserRef or []UserRef field

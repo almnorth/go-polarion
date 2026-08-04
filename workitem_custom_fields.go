@@ -5,7 +5,9 @@ package polarion
 
 import (
 	"encoding/json"
+	"math"
 	"strconv"
+	"strings"
 )
 
 // CustomFields provides type-safe access to custom fields in WorkItemAttributes.
@@ -52,8 +54,10 @@ func (cf CustomFields) GetString(key string) (string, bool) {
 }
 
 // GetInt safely retrieves an integer custom field (kind: integer).
-// Handles both int and float64 from JSON unmarshaling.
-// Returns the value and true if the field exists and can be converted to int, otherwise returns 0 and false.
+// Handles every numeric representation Polarion and encoding/json can produce
+// (see GetInt64), converting gracefully to int.
+// Returns the value and true if the field exists and can be converted to int,
+// otherwise returns 0 and false. A value that does not fit in an int returns false.
 //
 // Example:
 //
@@ -62,6 +66,35 @@ func (cf CustomFields) GetString(key string) (string, bool) {
 //	    fmt.Printf("Item Count: %d\n", count)
 //	}
 func (cf CustomFields) GetInt(key string) (int, bool) {
+	val, ok := cf.GetInt64(key)
+	if !ok {
+		return 0, false
+	}
+
+	// Guard against truncation on platforms where int is 32 bits
+	if int64(int(val)) != val {
+		return 0, false
+	}
+
+	return int(val), true
+}
+
+// GetInt64 safely retrieves an integer custom field (kind: integer) as an int64.
+// Polarion integer fields are unmarshaled as float64 by encoding/json, so this
+// method converts gracefully from any numeric representation:
+// all signed and unsigned integer types, float32/float64 (truncated toward zero),
+// json.Number, and numeric strings.
+//
+// Returns the value and true if the field exists and can be converted,
+// otherwise returns 0 and false.
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	if position, ok := cf.GetInt64("scopePosition"); ok {
+//	    fmt.Printf("Position: %d\n", position)
+//	}
+func (cf CustomFields) GetInt64(key string) (int64, bool) {
 	val, exists := cf[key]
 	if !exists {
 		return 0, false
@@ -72,16 +105,55 @@ func (cf CustomFields) GetInt(key string) (int, bool) {
 		return 0, false
 	}
 
-	// Handle different numeric types from JSON unmarshaling
 	switch v := val.(type) {
 	case int:
-		return v, true
+		return int64(v), true
+	case int8:
+		return int64(v), true
+	case int16:
+		return int64(v), true
+	case int32:
+		return int64(v), true
 	case int64:
-		return int(v), true
+		return v, true
+	case uint:
+		if uint64(v) > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case uint8:
+		return int64(v), true
+	case uint16:
+		return int64(v), true
+	case uint32:
+		return int64(v), true
+	case uint64:
+		if v > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
 	case float64:
-		return int(v), true
+		return int64(v), true
 	case float32:
-		return int(v), true
+		return int64(v), true
+	case json.Number:
+		// Present when the caller decodes with json.Decoder.UseNumber()
+		if i, err := v.Int64(); err == nil {
+			return i, true
+		}
+		if f, err := v.Float64(); err == nil {
+			return int64(f), true
+		}
+		return 0, false
+	case string:
+		// Some Polarion fields (e.g. large numbers, currency) come back as strings
+		if i, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+			return i, true
+		}
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return int64(f), true
+		}
+		return 0, false
 	default:
 		return 0, false
 	}
@@ -116,11 +188,33 @@ func (cf CustomFields) GetFloat(key string) (float64, bool) {
 		return float64(v), true
 	case int:
 		return float64(v), true
+	case int8:
+		return float64(v), true
+	case int16:
+		return float64(v), true
+	case int32:
+		return float64(v), true
 	case int64:
 		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint8:
+		return float64(v), true
+	case uint16:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case json.Number:
+		// Present when the caller decodes with json.Decoder.UseNumber()
+		if f, err := v.Float64(); err == nil {
+			return f, true
+		}
+		return 0.0, false
 	case string:
 		// Handle currency fields which come as strings from Polarion API
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
 			return f, true
 		}
 		return 0.0, false
@@ -385,6 +479,9 @@ func (cf CustomFields) GetTable(key string) (*TableField, bool) {
 // GetEnum safely retrieves an enum custom field (kind: enumeration).
 // This is an alias for GetString but makes the intent clearer for enumeration fields.
 //
+// For multi-enumeration fields (fields that accept several options), use GetEnums:
+// GetEnum returns false for them because the value is a JSON array, not a string.
+//
 // Example:
 //
 //	cf := CustomFields(workItem.Attributes.CustomFields)
@@ -393,6 +490,117 @@ func (cf CustomFields) GetTable(key string) (*TableField, bool) {
 //	}
 func (cf CustomFields) GetEnum(key string) (string, bool) {
 	return cf.GetString(key)
+}
+
+// GetStringSlice safely retrieves a multi-value custom field as a slice of strings
+// (kind: enumeration or string with multiple values). Polarion serializes these
+// fields as a JSON array of option IDs, e.g. {"myMultiEnum": ["opt1", "opt2"]}.
+//
+// Handles []string, []interface{} (from JSON unmarshaling) and a bare string
+// (which yields a single-element slice, since Polarion returns a plain string when
+// a multi-value field is configured with a single value in some versions).
+// Non-string elements of an array are skipped.
+//
+// Returns the values and true if the field exists and holds an array or string,
+// otherwise returns nil and false. An empty array yields an empty (non-nil) slice
+// and true, which distinguishes "explicitly empty" from "not set".
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	if options, ok := cf.GetStringSlice("affectedPlatforms"); ok {
+//	    fmt.Printf("Platforms: %v\n", options)
+//	}
+func (cf CustomFields) GetStringSlice(key string) ([]string, bool) {
+	val, exists := cf[key]
+	if !exists {
+		return nil, false
+	}
+
+	// Handle nil value
+	if val == nil {
+		return nil, false
+	}
+
+	switch v := val.(type) {
+	case []string:
+		// Return a copy so callers cannot mutate the stored value
+		result := make([]string, len(v))
+		copy(result, v)
+		return result, true
+
+	case []interface{}:
+		// Array from JSON unmarshaling
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if str, ok := item.(string); ok {
+				result = append(result, str)
+			}
+		}
+		return result, true
+
+	case string:
+		// Single value returned as a plain string
+		if v == "" {
+			return []string{}, true
+		}
+		return []string{v}, true
+
+	default:
+		return nil, false
+	}
+}
+
+// GetEnums safely retrieves a multi-enumeration custom field.
+// This is an alias for GetStringSlice but makes the intent clearer for
+// multi-enumeration fields. The returned values are enumeration option IDs.
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	if severities, ok := cf.GetEnums("affectedSeverities"); ok {
+//	    for _, severity := range severities {
+//	        fmt.Println(severity)
+//	    }
+//	}
+func (cf CustomFields) GetEnums(key string) ([]string, bool) {
+	return cf.GetStringSlice(key)
+}
+
+// SetStringSlice sets a multi-value custom field from a slice of strings.
+// The values are stored as a []string, which marshals to the JSON array
+// Polarion expects, e.g. {"myMultiEnum": ["opt1", "opt2"]}.
+//
+// A nil slice removes the field from the map (leaving it untouched in Polarion).
+// An empty non-nil slice stores an empty array, which clears the field in Polarion.
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	cf.SetStringSlice("affectedPlatforms", []string{"linux", "windows"})
+//	cf.SetStringSlice("affectedPlatforms", []string{}) // clears the field
+func (cf CustomFields) SetStringSlice(key string, values []string) {
+	if values == nil {
+		delete(cf, key)
+		return
+	}
+	// Store a copy so later mutations by the caller do not affect the work item
+	stored := make([]string, len(values))
+	copy(stored, values)
+	cf[key] = stored
+}
+
+// SetEnums sets a multi-enumeration custom field.
+// This is an alias for SetStringSlice but makes the intent clearer for
+// multi-enumeration fields. The values must be enumeration option IDs
+// (see EnumerationService to look them up).
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	cf.SetEnums("affectedSeverities", []string{"blocker", "critical"})
+func (cf CustomFields) SetEnums(key string, values []string) {
+	cf.SetStringSlice(key, values)
 }
 
 // Set sets a custom field value.

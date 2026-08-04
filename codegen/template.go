@@ -75,7 +75,11 @@ func (t *WorkItemTypeTemplate) writeStruct(sb *strings.Builder) {
 				sb.WriteString(fmt.Sprintf("\t// %s\n", field.Description))
 			}
 			if field.Kind == polarion.FieldKindEnumeration && field.EnumName != "" {
-				sb.WriteString(fmt.Sprintf("\t// Enumeration: %s\n", field.EnumName))
+				if field.MultiValue {
+					sb.WriteString(fmt.Sprintf("\t// Enumeration: %s (multi-value)\n", field.EnumName))
+				} else {
+					sb.WriteString(fmt.Sprintf("\t// Enumeration: %s\n", field.EnumName))
+				}
 			}
 			// Add JSON tag with omitempty for automatic field mapping
 			sb.WriteString(fmt.Sprintf("\t%s %s `json:\"%s,omitempty\"`\n", field.GoName, field.GoType, field.ID))
@@ -110,8 +114,22 @@ func (t *WorkItemTypeTemplate) writeLoadMethod(sb *strings.Builder) {
 	sb.WriteString("}\n\n")
 }
 
+// isSliceGoType reports whether a generated Go type is a slice (e.g. "[]string"),
+// which is how multi-value fields are represented.
+func isSliceGoType(goType string) bool {
+	return strings.HasPrefix(goType, "[]")
+}
+
 // writeLoadField writes the code to load a single field
 func (t *WorkItemTypeTemplate) writeLoadField(sb *strings.Builder, field FieldInfo) {
+	// Multi-value fields (multi-enumeration, multi-value string) load as string slices
+	if isSliceGoType(field.GoType) {
+		sb.WriteString(fmt.Sprintf("\tif val, ok := cf.GetStringSlice(%q); ok {\n", field.ID))
+		sb.WriteString(fmt.Sprintf("\t\tw.%s = val\n", field.GoName))
+		sb.WriteString("\t}\n\n")
+		return
+	}
+
 	switch field.Kind {
 	case polarion.FieldKindString, polarion.FieldKindEnumeration:
 		sb.WriteString(fmt.Sprintf("\tif val, ok := cf.GetString(%q); ok {\n", field.ID))
@@ -205,6 +223,11 @@ func (t *WorkItemTypeTemplate) writeSaveField(sb *strings.Builder, field FieldIn
 		// Table fields are saved as-is (the TableField struct handles serialization)
 		sb.WriteString(fmt.Sprintf("\t\tcf.Set(%q, w.%s)\n", field.ID, field.GoName))
 	default:
+		if isSliceGoType(field.GoType) {
+			// Multi-value fields are saved as a JSON array of values
+			sb.WriteString(fmt.Sprintf("\t\tcf.SetStringSlice(%q, w.%s)\n", field.ID, field.GoName))
+			break
+		}
 		sb.WriteString(fmt.Sprintf("\t\tcf.Set(%q, *w.%s)\n", field.ID, field.GoName))
 	}
 
@@ -231,6 +254,14 @@ func (t *WorkItemTypeTemplate) writeGetter(sb *strings.Builder, field FieldInfo)
 		sb.WriteString(fmt.Sprintf("// Enumeration: %s\n", field.EnumName))
 	}
 	sb.WriteString(fmt.Sprintf("func (w *%s) Get%s() %s {\n", t.typeName, field.GoName, returnType))
+
+	// Multi-value fields are slices: return them directly, with nil as the zero value
+	if isSliceGoType(field.GoType) {
+		sb.WriteString(fmt.Sprintf("\treturn w.%s\n", field.GoName))
+		sb.WriteString("}\n\n")
+		return
+	}
+
 	sb.WriteString(fmt.Sprintf("\tif w.%s != nil {\n", field.GoName))
 	sb.WriteString(fmt.Sprintf("\t\treturn *w.%s\n", field.GoName))
 	sb.WriteString("\t}\n")
@@ -273,7 +304,12 @@ func (t *WorkItemTypeTemplate) writeSetter(sb *strings.Builder, field FieldInfo)
 		sb.WriteString(fmt.Sprintf("// Enumeration: %s\n", field.EnumName))
 	}
 	sb.WriteString(fmt.Sprintf("func (w *%s) Set%s(value %s) {\n", t.typeName, field.GoName, paramType))
-	sb.WriteString(fmt.Sprintf("\tw.%s = &value\n", field.GoName))
+	if isSliceGoType(field.GoType) {
+		// Multi-value fields are slices, so they are assigned directly
+		sb.WriteString(fmt.Sprintf("\tw.%s = value\n", field.GoName))
+	} else {
+		sb.WriteString(fmt.Sprintf("\tw.%s = &value\n", field.GoName))
+	}
 	sb.WriteString("\tif w.base != nil && w.base.Attributes != nil {\n")
 	sb.WriteString("\t\tif w.base.Attributes.CustomFields == nil {\n")
 	sb.WriteString("\t\t\tw.base.Attributes.CustomFields = make(map[string]interface{})\n")

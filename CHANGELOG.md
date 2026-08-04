@@ -5,6 +5,58 @@ All notable changes to `go-polarion` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18] - 2026-08-05
+
+### Added
+
+- **Multi-enumeration custom field support.** Multi-value custom fields
+  (multi-enumeration and multi-value string) can now be read and written as
+  `[]string` instead of only through the raw custom fields map.
+  - New accessors on `CustomFields`: `GetStringSlice` / `GetEnums` and
+    `SetStringSlice` / `SetEnums`. Reading tolerates a JSON array, a `[]string`,
+    or a bare string (yielding a single-element slice).
+  - `LoadCustomFields` / `SaveCustomFields` now map `[]string`, `*[]string`, and
+    slices of named string types (e.g. `[]Platform`); previously such fields
+    failed with `field must be a pointer type`. A `nil` slice removes the field,
+    an empty non-nil slice sends `[]` (clearing the field in Polarion).
+  - `CustomFieldType.IsMulti()` reports the multi-value flag, accepting both the
+    `multi` and `multiValue` JSON keys Polarion has used.
+  - The code generator emits `[]string` for multi-value string and enumeration
+    fields when the metadata exposes the flag.
+- **All Go numeric widths for integer and float custom fields.**
+  `LoadCustomFields` / `SaveCustomFields` previously supported only `*int` and
+  `*float64` and failed with `unsupported field type: int64` on anything else.
+  They now map `*int8`…`*int64`, `*uint`…`*uint64`, `*float32`, and named types
+  with those kinds (e.g. `type ScopePosition int64`).
+  - New `CustomFields.GetInt64` accessor, converting gracefully from any numeric
+    representation: signed/unsigned integers, `float32`/`float64`, `json.Number`,
+    and numeric strings. `GetInt` and `GetFloat` accept the same inputs.
+  - Values that do not fit the target field (overflow, or a negative value in an
+    unsigned field) now report an error instead of being silently truncated.
+  - Integers are saved as `int64`, so values above 2^53 round-trip exactly
+    instead of losing precision through `float64`.
+
+### Fixed
+
+- **Non-ASCII text is no longer mangled when writing to Polarion.** Requests now
+  send `Content-Type: application/json; charset=utf-8` instead of a bare
+  `application/json`. Without the charset parameter Polarion's servlet container
+  fell back to ISO-8859-1 and decoded each UTF-8 byte as a separate character, so
+  a title of `Wärtsilä` was stored as `WÃ¤rtsilÃ¤`. Affected every JSON request
+  body: work items, custom fields, comments, links, and all other create/update
+  calls.
+  - Values already stored incorrectly by an earlier version are not repaired
+    automatically; the affected fields must be written again.
+- `LoadCustomFields` no longer panics when a custom field is declared with a named
+  string, numeric, or boolean type (e.g. `*ScopePosition`); such fields were
+  matched by kind but assigned as their underlying type.
+
+### Changed
+
+- Documented multi-value and full-width numeric custom fields in `README.md` and
+  `docs/CUSTOM-WORKITEMS.md`, and the request character-encoding contract in
+  `docs/ARCHITECTURE.md`.
+
 ## [0.1.17] - 2026-06-11
 
 ### Added
@@ -90,6 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release.
 
+[0.1.18]: https://github.com/almnorth/go-polarion/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/almnorth/go-polarion/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/almnorth/go-polarion/compare/v0.1.5...v0.1.16
 [0.1.5]: https://github.com/almnorth/go-polarion/compare/v0.1.4...v0.1.5
