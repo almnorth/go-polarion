@@ -5,6 +5,25 @@ All notable changes to `go-polarion` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Multi-enumeration custom field support.** Multi-value custom fields
+  (multi-enumeration and multi-value string) can now be read and written as
+  `[]string` instead of only through the raw custom fields map.
+  - New accessors on `CustomFields`: `GetStringSlice` / `GetEnums` and
+    `SetStringSlice` / `SetEnums`. Reading tolerates a JSON array, a `[]string`,
+    or a bare string (yielding a single-element slice).
+  - `LoadCustomFields` / `SaveCustomFields` now map `[]string`, `*[]string`, and
+    slices of named string types (e.g. `[]Platform`); previously such fields
+    failed with `field must be a pointer type`. A `nil` slice removes the field,
+    an empty non-nil slice sends `[]` (clearing the field in Polarion).
+  - `CustomFieldType.IsMulti()` reports the multi-value flag, accepting both the
+    `multi` and `multiValue` JSON keys Polarion has used.
+  - The code generator emits `[]string` for multi-value string and enumeration
+    fields when the metadata exposes the flag.
+
 ## [0.1.17] - 2026-06-11
 
 ### Added

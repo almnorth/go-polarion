@@ -57,8 +57,13 @@
 //   - duration → *polarion.Duration
 //   - enumeration → *string (with enum name in comments)
 //   - relationship → *string (relationship ID)
+//   - multi-value string/enumeration → []string (option IDs)
 //
-// All fields use pointer types to distinguish between "not set" and "zero value".
+// Single-value fields use pointer types to distinguish between "not set" and
+// "zero value"; multi-value fields use a slice, where nil means "not set".
+// Note that not every Polarion version reports the multi-value flag in the fields
+// metadata — when it is absent, a multi-enumeration field is generated as *string
+// and has to be changed to []string manually.
 //
 // # Refresh Mode
 //

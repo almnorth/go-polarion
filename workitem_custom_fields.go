@@ -385,6 +385,9 @@ func (cf CustomFields) GetTable(key string) (*TableField, bool) {
 // GetEnum safely retrieves an enum custom field (kind: enumeration).
 // This is an alias for GetString but makes the intent clearer for enumeration fields.
 //
+// For multi-enumeration fields (fields that accept several options), use GetEnums:
+// GetEnum returns false for them because the value is a JSON array, not a string.
+//
 // Example:
 //
 //	cf := CustomFields(workItem.Attributes.CustomFields)
@@ -393,6 +396,117 @@ func (cf CustomFields) GetTable(key string) (*TableField, bool) {
 //	}
 func (cf CustomFields) GetEnum(key string) (string, bool) {
 	return cf.GetString(key)
+}
+
+// GetStringSlice safely retrieves a multi-value custom field as a slice of strings
+// (kind: enumeration or string with multiple values). Polarion serializes these
+// fields as a JSON array of option IDs, e.g. {"myMultiEnum": ["opt1", "opt2"]}.
+//
+// Handles []string, []interface{} (from JSON unmarshaling) and a bare string
+// (which yields a single-element slice, since Polarion returns a plain string when
+// a multi-value field is configured with a single value in some versions).
+// Non-string elements of an array are skipped.
+//
+// Returns the values and true if the field exists and holds an array or string,
+// otherwise returns nil and false. An empty array yields an empty (non-nil) slice
+// and true, which distinguishes "explicitly empty" from "not set".
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	if options, ok := cf.GetStringSlice("affectedPlatforms"); ok {
+//	    fmt.Printf("Platforms: %v\n", options)
+//	}
+func (cf CustomFields) GetStringSlice(key string) ([]string, bool) {
+	val, exists := cf[key]
+	if !exists {
+		return nil, false
+	}
+
+	// Handle nil value
+	if val == nil {
+		return nil, false
+	}
+
+	switch v := val.(type) {
+	case []string:
+		// Return a copy so callers cannot mutate the stored value
+		result := make([]string, len(v))
+		copy(result, v)
+		return result, true
+
+	case []interface{}:
+		// Array from JSON unmarshaling
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if str, ok := item.(string); ok {
+				result = append(result, str)
+			}
+		}
+		return result, true
+
+	case string:
+		// Single value returned as a plain string
+		if v == "" {
+			return []string{}, true
+		}
+		return []string{v}, true
+
+	default:
+		return nil, false
+	}
+}
+
+// GetEnums safely retrieves a multi-enumeration custom field.
+// This is an alias for GetStringSlice but makes the intent clearer for
+// multi-enumeration fields. The returned values are enumeration option IDs.
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	if severities, ok := cf.GetEnums("affectedSeverities"); ok {
+//	    for _, severity := range severities {
+//	        fmt.Println(severity)
+//	    }
+//	}
+func (cf CustomFields) GetEnums(key string) ([]string, bool) {
+	return cf.GetStringSlice(key)
+}
+
+// SetStringSlice sets a multi-value custom field from a slice of strings.
+// The values are stored as a []string, which marshals to the JSON array
+// Polarion expects, e.g. {"myMultiEnum": ["opt1", "opt2"]}.
+//
+// A nil slice removes the field from the map (leaving it untouched in Polarion).
+// An empty non-nil slice stores an empty array, which clears the field in Polarion.
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	cf.SetStringSlice("affectedPlatforms", []string{"linux", "windows"})
+//	cf.SetStringSlice("affectedPlatforms", []string{}) // clears the field
+func (cf CustomFields) SetStringSlice(key string, values []string) {
+	if values == nil {
+		delete(cf, key)
+		return
+	}
+	// Store a copy so later mutations by the caller do not affect the work item
+	stored := make([]string, len(values))
+	copy(stored, values)
+	cf[key] = stored
+}
+
+// SetEnums sets a multi-enumeration custom field.
+// This is an alias for SetStringSlice but makes the intent clearer for
+// multi-enumeration fields. The values must be enumeration option IDs
+// (see EnumerationService to look them up).
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	cf.SetEnums("affectedSeverities", []string{"blocker", "critical"})
+func (cf CustomFields) SetEnums(key string, values []string) {
+	cf.SetStringSlice(key, values)
 }
 
 // Set sets a custom field value.

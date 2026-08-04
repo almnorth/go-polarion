@@ -398,6 +398,7 @@ func (r *Requirement) SaveToWorkItem() error {
 
 The automatic mapper supports all custom field types:
 - `*string` - for string and enum fields
+- `[]string` (or `*[]string`) - for multi-value string and multi-enumeration fields
 - `*int` - for integer fields
 - `*float64` - for float fields
 - `*bool` - for boolean fields
@@ -648,6 +649,62 @@ req.EstimatedEffort = &duration
 // Parsing
 duration, err := polarion.ParseDuration("2d 3h 30m")
 ```
+
+### Multi-Enumeration Fields
+
+Used for enumeration fields that accept several options at once, and for multi-value
+string fields. Polarion serializes them as a JSON array of enumeration option IDs:
+
+```json
+{"affectedPlatforms": ["linux", "windows"]}
+```
+
+Declare them as `[]string` (a named string element type such as `[]Platform` also
+works, as does `*[]string`):
+
+```go
+// Definition
+AffectedPlatforms []string `json:"affectedPlatforms,omitempty"`
+
+// Loading (handled by LoadCustomFields, or directly)
+if vals, ok := cf.GetEnums("affectedPlatforms"); ok {
+    r.AffectedPlatforms = vals
+}
+
+// Saving (handled by SaveCustomFields, or directly)
+cf.SetEnums("affectedPlatforms", r.AffectedPlatforms)
+
+// Creating
+req.AffectedPlatforms = []string{"linux", "windows"}
+```
+
+Semantics:
+
+| Go value | Result |
+|----------|--------|
+| `nil` slice | Field is removed from the payload — Polarion leaves it untouched |
+| `[]string{}` | `[]` is sent — clears the field in Polarion |
+| `[]string{"a", "b"}` | `["a", "b"]` is sent |
+
+`GetEnums` (alias of `GetStringSlice`) tolerates all shapes Polarion returns: a JSON
+array, a `[]string` you set yourself, and a bare string (yielding a single-element
+slice). `GetEnum`/`GetString` return `false` for a multi-enumeration field, since a
+single `string` cannot represent several values.
+
+Values are enumeration **option IDs**, not display names. Look them up with the
+enumerations service:
+
+```go
+enum, err := client.Enumerations.Get(ctx, "project", "platform-enum", "~")
+for _, opt := range enum.Attributes.Options {
+    fmt.Println(opt.ID)
+}
+```
+
+**Note on metadata**: not every Polarion version reports the multi-value flag in the
+fields metadata (`CustomFieldType.IsMulti()`). When it is missing, the code generator
+cannot tell a multi-enumeration field from a single-enumeration one and will generate
+`*string`; change the generated field to `[]string` by hand in that case.
 
 ### User Reference Fields
 

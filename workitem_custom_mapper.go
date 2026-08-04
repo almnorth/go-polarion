@@ -15,6 +15,7 @@ import (
 //
 // Supported field types:
 //   - *string (for string and enum fields)
+//   - []string (for multi-value string and multi-enumeration fields)
 //   - *int (for integer fields)
 //   - *float64 (for float fields)
 //   - *bool (for boolean fields)
@@ -36,6 +37,7 @@ import (
 //	    BusinessValue        *string           `json:"businessValue"`
 //	    TargetRelease        *DateOnly         `json:"targetRelease"`
 //	    ComplexityPoints     *float64          `json:"complexityPoints"`
+//	    AffectedPlatforms    []string          `json:"affectedPlatforms"` // Multi-enumeration
 //	    Purchaser            *polarion.UserRef `json:"purchaser"`   // Single user reference
 //	    BoardMembers            []polarion.UserRef `json:"BoardMembers"`  // Multi-value user reference
 //	}
@@ -173,12 +175,30 @@ func SaveCustomFields(wi *WorkItem, source interface{}) error {
 
 // loadField loads a single field from custom fields based on its type
 func loadField(cf CustomFields, field reflect.Value, fieldName string) error {
+	// Multi-value fields (multi-enumeration, multi-value string) map to string slices
+	if isStringSliceType(field.Type()) {
+		if vals, ok := cf.GetStringSlice(fieldName); ok {
+			field.Set(stringSliceToValue(field.Type(), vals))
+		}
+		return nil
+	}
+
 	if field.Kind() != reflect.Ptr {
 		return fmt.Errorf("field must be a pointer type")
 	}
 
 	// Get the element type
 	elemType := field.Type().Elem()
+
+	// Pointer to a string slice (*[]string) is also accepted for multi-value fields
+	if isStringSliceType(elemType) {
+		if vals, ok := cf.GetStringSlice(fieldName); ok {
+			ptr := reflect.New(elemType)
+			ptr.Elem().Set(stringSliceToValue(elemType, vals))
+			field.Set(ptr)
+		}
+		return nil
+	}
 
 	switch elemType.Kind() {
 	case reflect.String:
@@ -255,6 +275,18 @@ func loadField(cf CustomFields, field reflect.Value, fieldName string) error {
 
 // saveField saves a single field to custom fields based on its type
 func saveField(cf CustomFields, field reflect.Value, fieldName string) error {
+	// Multi-value fields (multi-enumeration, multi-value string) map to string slices.
+	// A nil slice removes the field; an empty non-nil slice stores an empty array,
+	// which clears the field in Polarion.
+	if isStringSliceType(field.Type()) {
+		if field.IsNil() {
+			cf.Delete(fieldName)
+			return nil
+		}
+		cf.SetStringSlice(fieldName, valueToStringSlice(field))
+		return nil
+	}
+
 	if field.Kind() != reflect.Ptr {
 		return fmt.Errorf("field must be a pointer type")
 	}
@@ -268,6 +300,16 @@ func saveField(cf CustomFields, field reflect.Value, fieldName string) error {
 	// Dereference the pointer
 	fieldValue := field.Elem()
 	elemType := field.Type().Elem()
+
+	// Pointer to a string slice (*[]string) is also accepted for multi-value fields
+	if isStringSliceType(elemType) {
+		if fieldValue.IsNil() {
+			cf.Delete(fieldName)
+			return nil
+		}
+		cf.SetStringSlice(fieldName, valueToStringSlice(fieldValue))
+		return nil
+	}
 
 	switch elemType.Kind() {
 	case reflect.String:
@@ -326,6 +368,33 @@ func saveField(cf CustomFields, field reflect.Value, fieldName string) error {
 	default:
 		return fmt.Errorf("unsupported field type: %s", elemType.Kind())
 	}
+}
+
+// isStringSliceType reports whether t is a slice whose element kind is string,
+// e.g. []string or []MyEnumType. This is how Polarion multi-value custom fields
+// (multi-enumeration, multi-value string) are represented in Go.
+// []UserRef is excluded because its element kind is struct, not string.
+func isStringSliceType(t reflect.Type) bool {
+	return t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.String
+}
+
+// stringSliceToValue builds a reflect.Value of slice type t from a []string.
+// Named string element types (e.g. type Platform string) are supported.
+func stringSliceToValue(t reflect.Type, vals []string) reflect.Value {
+	slice := reflect.MakeSlice(t, len(vals), len(vals))
+	for i, val := range vals {
+		slice.Index(i).SetString(val)
+	}
+	return slice
+}
+
+// valueToStringSlice converts a reflect.Value of a string-kinded slice to []string.
+func valueToStringSlice(v reflect.Value) []string {
+	vals := make([]string, v.Len())
+	for i := 0; i < v.Len(); i++ {
+		vals[i] = v.Index(i).String()
+	}
+	return vals
 }
 
 // isUserRefField checks if a reflect.Value represents a *UserRef or []UserRef field
