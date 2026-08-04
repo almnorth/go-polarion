@@ -5,7 +5,7 @@ All notable changes to `go-polarion` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.18] - 2026-08-05
 
 ### Added
 
@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LoadCustomFields` no longer panics when a custom field is declared with a named
   string, numeric, or boolean type (e.g. `*ScopePosition`); such fields were
   matched by kind but assigned as their underlying type.
+
+### Changed
+
+- Documented multi-value and full-width numeric custom fields in `README.md` and
+  `docs/CUSTOM-WORKITEMS.md`, and the request character-encoding contract in
+  `docs/ARCHITECTURE.md`.
 
 ## [0.1.17] - 2026-06-11
 
@@ -136,6 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release.
 
+[0.1.18]: https://github.com/almnorth/go-polarion/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/almnorth/go-polarion/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/almnorth/go-polarion/compare/v0.1.5...v0.1.16
 [0.1.5]: https://github.com/almnorth/go-polarion/compare/v0.1.4...v0.1.5
