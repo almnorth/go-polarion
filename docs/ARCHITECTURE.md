@@ -324,7 +324,7 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
     req.Header.Set("Authorization", "Bearer "+c.token)
     
     // Add headers
-    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Content-Type", "application/json; charset=utf-8")
     req.Header.Set("Accept", "application/json")
     
     // Execute with retry
@@ -338,6 +338,24 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 - Header management
 - Response handling
 - Connection pooling
+
+**Character encoding:**
+
+The `charset=utf-8` parameter on `Content-Type` is required, not cosmetic. Go
+marshals request bodies as UTF-8, but when the parameter is absent Polarion's
+servlet container falls back to ISO-8859-1 and decodes each UTF-8 byte as its own
+character — `Wärtsilä` is then stored as `WÃ¤rtsilÃ¤`. Because every JSON request
+body passes through `DoRequest` and therefore `Do`, setting the header in one
+place covers all write operations.
+
+The response path needs no equivalent handling: `encoding/json` always decodes as
+UTF-8, and Go strings hold the resulting bytes unchanged. URL paths and query
+parameters are percent-encoded UTF-8 via `url.PathEscape` and `url.Values.Encode`,
+which Polarion decodes correctly by default.
+
+Code supplying its own `Content-Type` (for example a custom `RoundTripper`, or the
+binary avatar upload in `user_service.go`) bypasses the default and must include
+the charset parameter itself where the body is text.
 
 ### Retry Logic
 

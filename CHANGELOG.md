@@ -38,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Non-ASCII text is no longer mangled when writing to Polarion.** Requests now
+  send `Content-Type: application/json; charset=utf-8` instead of a bare
+  `application/json`. Without the charset parameter Polarion's servlet container
+  fell back to ISO-8859-1 and decoded each UTF-8 byte as a separate character, so
+  a title of `Wärtsilä` was stored as `WÃ¤rtsilÃ¤`. Affected every JSON request
+  body: work items, custom fields, comments, links, and all other create/update
+  calls.
+  - Values already stored incorrectly by an earlier version are not repaired
+    automatically; the affected fields must be written again.
 - `LoadCustomFields` no longer panics when a custom field is declared with a named
   string, numeric, or boolean type (e.g. `*ScopePosition`); such fields were
   matched by kind but assigned as their underlying type.
