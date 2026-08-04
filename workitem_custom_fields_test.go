@@ -3,7 +3,74 @@
 
 package polarion
 
-import "testing"
+import (
+	"encoding/json"
+	"math"
+	"strconv"
+	"testing"
+)
+
+func TestCustomFields_GetInt64(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    interface{}
+		expected int64
+		expectOK bool
+	}{
+		{name: "float64 from JSON", value: float64(42), expected: 42, expectOK: true},
+		{name: "large float64", value: float64(1234567890123), expected: 1234567890123, expectOK: true},
+		{name: "int", value: 42, expected: 42, expectOK: true},
+		{name: "int32", value: int32(42), expected: 42, expectOK: true},
+		{name: "int64", value: int64(9007199254740993), expected: 9007199254740993, expectOK: true},
+		{name: "uint64", value: uint64(42), expected: 42, expectOK: true},
+		{name: "negative", value: float64(-7), expected: -7, expectOK: true},
+		{name: "truncated float", value: 3.9, expected: 3, expectOK: true},
+		{name: "json.Number", value: json.Number("42"), expected: 42, expectOK: true},
+		{name: "numeric string", value: "42", expected: 42, expectOK: true},
+		{name: "padded numeric string", value: " 42 ", expected: 42, expectOK: true},
+		{name: "non-numeric string", value: "high", expected: 0, expectOK: false},
+		{name: "uint64 above MaxInt64", value: uint64(math.MaxUint64), expected: 0, expectOK: false},
+		{name: "bool", value: true, expected: 0, expectOK: false},
+		{name: "nil", value: nil, expected: 0, expectOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cf := CustomFields{"field": tt.value}
+			val, ok := cf.GetInt64("field")
+			if ok != tt.expectOK {
+				t.Fatalf("ok: expected %t, got %t", tt.expectOK, ok)
+			}
+			if val != tt.expected {
+				t.Errorf("expected %d, got %d", tt.expected, val)
+			}
+		})
+	}
+
+	// Missing key
+	empty := CustomFields{}
+	if _, ok := empty.GetInt64("field"); ok {
+		t.Error("expected false for a missing key")
+	}
+}
+
+func TestCustomFields_GetIntOverflow(t *testing.T) {
+	cf := CustomFields{"field": int64(math.MaxInt64)}
+
+	// GetInt64 keeps the value; GetInt refuses to truncate it on 32-bit platforms
+	if val, ok := cf.GetInt64("field"); !ok || val != math.MaxInt64 {
+		t.Errorf("GetInt64: expected %d, got %d (ok=%t)", int64(math.MaxInt64), val, ok)
+	}
+
+	val, ok := cf.GetInt("field")
+	if strconv.IntSize == 64 {
+		if !ok || int64(val) != math.MaxInt64 {
+			t.Errorf("GetInt: expected %d, got %d (ok=%t)", int64(math.MaxInt64), val, ok)
+		}
+	} else if ok {
+		t.Error("GetInt: expected false when the value does not fit an int")
+	}
+}
 
 func TestCustomFields_GetStringSlice(t *testing.T) {
 	tests := []struct {

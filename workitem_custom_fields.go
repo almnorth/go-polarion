@@ -5,7 +5,9 @@ package polarion
 
 import (
 	"encoding/json"
+	"math"
 	"strconv"
+	"strings"
 )
 
 // CustomFields provides type-safe access to custom fields in WorkItemAttributes.
@@ -52,8 +54,10 @@ func (cf CustomFields) GetString(key string) (string, bool) {
 }
 
 // GetInt safely retrieves an integer custom field (kind: integer).
-// Handles both int and float64 from JSON unmarshaling.
-// Returns the value and true if the field exists and can be converted to int, otherwise returns 0 and false.
+// Handles every numeric representation Polarion and encoding/json can produce
+// (see GetInt64), converting gracefully to int.
+// Returns the value and true if the field exists and can be converted to int,
+// otherwise returns 0 and false. A value that does not fit in an int returns false.
 //
 // Example:
 //
@@ -62,6 +66,35 @@ func (cf CustomFields) GetString(key string) (string, bool) {
 //	    fmt.Printf("Item Count: %d\n", count)
 //	}
 func (cf CustomFields) GetInt(key string) (int, bool) {
+	val, ok := cf.GetInt64(key)
+	if !ok {
+		return 0, false
+	}
+
+	// Guard against truncation on platforms where int is 32 bits
+	if int64(int(val)) != val {
+		return 0, false
+	}
+
+	return int(val), true
+}
+
+// GetInt64 safely retrieves an integer custom field (kind: integer) as an int64.
+// Polarion integer fields are unmarshaled as float64 by encoding/json, so this
+// method converts gracefully from any numeric representation:
+// all signed and unsigned integer types, float32/float64 (truncated toward zero),
+// json.Number, and numeric strings.
+//
+// Returns the value and true if the field exists and can be converted,
+// otherwise returns 0 and false.
+//
+// Example:
+//
+//	cf := CustomFields(workItem.Attributes.CustomFields)
+//	if position, ok := cf.GetInt64("scopePosition"); ok {
+//	    fmt.Printf("Position: %d\n", position)
+//	}
+func (cf CustomFields) GetInt64(key string) (int64, bool) {
 	val, exists := cf[key]
 	if !exists {
 		return 0, false
@@ -72,16 +105,55 @@ func (cf CustomFields) GetInt(key string) (int, bool) {
 		return 0, false
 	}
 
-	// Handle different numeric types from JSON unmarshaling
 	switch v := val.(type) {
 	case int:
-		return v, true
+		return int64(v), true
+	case int8:
+		return int64(v), true
+	case int16:
+		return int64(v), true
+	case int32:
+		return int64(v), true
 	case int64:
-		return int(v), true
+		return v, true
+	case uint:
+		if uint64(v) > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
+	case uint8:
+		return int64(v), true
+	case uint16:
+		return int64(v), true
+	case uint32:
+		return int64(v), true
+	case uint64:
+		if v > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v), true
 	case float64:
-		return int(v), true
+		return int64(v), true
 	case float32:
-		return int(v), true
+		return int64(v), true
+	case json.Number:
+		// Present when the caller decodes with json.Decoder.UseNumber()
+		if i, err := v.Int64(); err == nil {
+			return i, true
+		}
+		if f, err := v.Float64(); err == nil {
+			return int64(f), true
+		}
+		return 0, false
+	case string:
+		// Some Polarion fields (e.g. large numbers, currency) come back as strings
+		if i, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+			return i, true
+		}
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return int64(f), true
+		}
+		return 0, false
 	default:
 		return 0, false
 	}
@@ -116,11 +188,33 @@ func (cf CustomFields) GetFloat(key string) (float64, bool) {
 		return float64(v), true
 	case int:
 		return float64(v), true
+	case int8:
+		return float64(v), true
+	case int16:
+		return float64(v), true
+	case int32:
+		return float64(v), true
 	case int64:
 		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint8:
+		return float64(v), true
+	case uint16:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case json.Number:
+		// Present when the caller decodes with json.Decoder.UseNumber()
+		if f, err := v.Float64(); err == nil {
+			return f, true
+		}
+		return 0.0, false
 	case string:
 		// Handle currency fields which come as strings from Polarion API
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
 			return f, true
 		}
 		return 0.0, false

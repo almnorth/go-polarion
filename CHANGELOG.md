@@ -23,6 +23,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `multi` and `multiValue` JSON keys Polarion has used.
   - The code generator emits `[]string` for multi-value string and enumeration
     fields when the metadata exposes the flag.
+- **All Go numeric widths for integer and float custom fields.**
+  `LoadCustomFields` / `SaveCustomFields` previously supported only `*int` and
+  `*float64` and failed with `unsupported field type: int64` on anything else.
+  They now map `*int8`…`*int64`, `*uint`…`*uint64`, `*float32`, and named types
+  with those kinds (e.g. `type ScopePosition int64`).
+  - New `CustomFields.GetInt64` accessor, converting gracefully from any numeric
+    representation: signed/unsigned integers, `float32`/`float64`, `json.Number`,
+    and numeric strings. `GetInt` and `GetFloat` accept the same inputs.
+  - Values that do not fit the target field (overflow, or a negative value in an
+    unsigned field) now report an error instead of being silently truncated.
+  - Integers are saved as `int64`, so values above 2^53 round-trip exactly
+    instead of losing precision through `float64`.
+
+### Fixed
+
+- `LoadCustomFields` no longer panics when a custom field is declared with a named
+  string, numeric, or boolean type (e.g. `*ScopePosition`); such fields were
+  matched by kind but assigned as their underlying type.
 
 ## [0.1.17] - 2026-06-11
 

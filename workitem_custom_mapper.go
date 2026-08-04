@@ -16,8 +16,9 @@ import (
 // Supported field types:
 //   - *string (for string and enum fields)
 //   - []string (for multi-value string and multi-enumeration fields)
-//   - *int (for integer fields)
-//   - *float64 (for float fields)
+//   - *int, *int8, *int16, *int32, *int64 (for integer fields)
+//   - *uint, *uint8, *uint16, *uint32, *uint64 (for non-negative integer fields)
+//   - *float32, *float64 (for float and currency fields)
 //   - *bool (for boolean fields)
 //   - *DateOnly (for date fields)
 //   - *TimeOnly (for time fields)
@@ -27,6 +28,14 @@ import (
 //   - *TableField (for table fields)
 //   - *UserRef (for single user reference fields - stored in relationships)
 //   - []UserRef (for multi-value user reference fields - stored in relationships)
+//
+// Named types with one of the kinds above are also supported (e.g. type Position int64,
+// type Platform string, []Platform).
+//
+// Values are converted gracefully: a Polarion integer arrives as a JSON number and is
+// accepted by any integer-width field, and a field whose Go type cannot hold the value
+// (overflow, or a negative value in an unsigned field) reports an error rather than
+// silently truncating.
 //
 // Note: UserRef fields are stored in Polarion's relationships section, not attributes.
 // This function automatically handles loading them from the correct location.
@@ -203,25 +212,53 @@ func loadField(cf CustomFields, field reflect.Value, fieldName string) error {
 	switch elemType.Kind() {
 	case reflect.String:
 		if val, ok := cf.GetString(fieldName); ok {
-			field.Set(reflect.ValueOf(&val))
+			ptr := reflect.New(elemType)
+			ptr.Elem().SetString(val)
+			field.Set(ptr)
 		}
 		return nil
 
-	case reflect.Int:
-		if val, ok := cf.GetInt(fieldName); ok {
-			field.Set(reflect.ValueOf(&val))
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if val, ok := cf.GetInt64(fieldName); ok {
+			ptr := reflect.New(elemType)
+			if ptr.Elem().OverflowInt(val) {
+				return fmt.Errorf("value %d overflows %s", val, elemType)
+			}
+			ptr.Elem().SetInt(val)
+			field.Set(ptr)
 		}
 		return nil
 
-	case reflect.Float64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if val, ok := cf.GetInt64(fieldName); ok {
+			if val < 0 {
+				return fmt.Errorf("negative value %d cannot be stored in %s", val, elemType)
+			}
+			ptr := reflect.New(elemType)
+			if ptr.Elem().OverflowUint(uint64(val)) {
+				return fmt.Errorf("value %d overflows %s", val, elemType)
+			}
+			ptr.Elem().SetUint(uint64(val))
+			field.Set(ptr)
+		}
+		return nil
+
+	case reflect.Float32, reflect.Float64:
 		if val, ok := cf.GetFloat(fieldName); ok {
-			field.Set(reflect.ValueOf(&val))
+			ptr := reflect.New(elemType)
+			if ptr.Elem().OverflowFloat(val) {
+				return fmt.Errorf("value %v overflows %s", val, elemType)
+			}
+			ptr.Elem().SetFloat(val)
+			field.Set(ptr)
 		}
 		return nil
 
 	case reflect.Bool:
 		if val, ok := cf.GetBool(fieldName); ok {
-			field.Set(reflect.ValueOf(&val))
+			ptr := reflect.New(elemType)
+			ptr.Elem().SetBool(val)
+			field.Set(ptr)
 		}
 		return nil
 
@@ -316,11 +353,16 @@ func saveField(cf CustomFields, field reflect.Value, fieldName string) error {
 		cf.Set(fieldName, fieldValue.String())
 		return nil
 
-	case reflect.Int:
-		cf.Set(fieldName, int(fieldValue.Int()))
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		// Stored as int64 so any integer width round-trips without truncation
+		cf.Set(fieldName, fieldValue.Int())
 		return nil
 
-	case reflect.Float64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		cf.Set(fieldName, fieldValue.Uint())
+		return nil
+
+	case reflect.Float32, reflect.Float64:
 		cf.Set(fieldName, fieldValue.Float())
 		return nil
 

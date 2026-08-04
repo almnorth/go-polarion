@@ -491,15 +491,22 @@ if req.BusinessValue != nil {
 
 ### Integer Fields
 
-Used for whole numbers.
+Used for whole numbers. Any Go integer width works — `*int`, `*int8`, `*int16`,
+`*int32`, `*int64`, and the unsigned variants — as do named types such as
+`*ScopePosition` (defined as `type ScopePosition int64`). Use `*int64` for values
+beyond the 32-bit range.
 
 ```go
 // Definition
-ItemCount *int
+ItemCount     *int
+ScopePosition *int64
 
 // Loading
 if val, ok := cf.GetInt("itemCount"); ok {
     r.ItemCount = &val
+}
+if val, ok := cf.GetInt64("scopePosition"); ok {
+    r.ScopePosition = &val
 }
 
 // Saving
@@ -507,6 +514,17 @@ if r.ItemCount != nil {
     cf.Set("itemCount", *r.ItemCount)
 }
 ```
+
+Polarion returns integers as JSON numbers, which `encoding/json` unmarshals to
+`float64`. `GetInt64` converts gracefully from any representation: all signed and
+unsigned integer types, `float32`/`float64` (truncated toward zero), `json.Number`,
+and numeric strings. `GetInt` does the same but reports `false` for a value that
+does not fit an `int`.
+
+`LoadCustomFields` reports an error instead of silently corrupting data when a value
+does not fit the target field (overflow, or a negative value in an unsigned field).
+On save, integers are stored as `int64`, so values above 2^53 round-trip exactly
+rather than losing precision through `float64`.
 
 ### Float Fields
 
