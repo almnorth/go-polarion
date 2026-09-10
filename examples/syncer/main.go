@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Polarion Client Contributors
 
-// Package main demonstrates a clean pattern for syncing external data to Polarion.
+// Package main demonstrates syncing external data into Polarion with the
+// built-in sync engine.
 //
 // This example shows:
-//   - Defining a typed work item wrapper with JSON tags for custom fields
-//   - Populating work items from external data sources
-//   - Efficient sync with change detection using Clone() and Equals()
-//   - Creating new items and updating only changed items
+//   - Defining a mapping struct whose JSON tags are Polarion custom field IDs
+//   - Populating a work item from an external record
+//   - Staging rows and flushing them as batched creates and updates
+//   - Enriching the same work items from a second data source
 package main
 
 import (
@@ -19,7 +20,7 @@ import (
 	polarion "github.com/almnorth/go-polarion"
 )
 
-// ExternalRecord represents data from an external system (e.g., database, API, etc.)
+// ExternalRecord represents data from an external system (database, API, ...).
 type ExternalRecord struct {
 	ID          string
 	Title       string
@@ -29,150 +30,56 @@ type ExternalRecord struct {
 	IsCompleted bool
 }
 
-// Task represents a Polarion work item with type-safe custom fields.
-// JSON tags map directly to Polarion custom field IDs.
+// Task maps external data onto Polarion custom fields. The JSON tags are the
+// custom field IDs. Fields the struct does not declare are left untouched, so
+// two syncs can own different fields of the same work item.
 type Task struct {
-	base       *polarion.WorkItem
-	ExternalID *string            `json:"externalId,omitempty"` // Links to external system
+	ExternalID *string            `json:"externalId,omitempty"`
 	DueDate    *polarion.DateOnly `json:"dueDate,omitempty"`
 	Priority   *string            `json:"priority,omitempty"`
 	Completed  *bool              `json:"completed,omitempty"`
 }
 
-// PopulateFromExternal populates the Task from an external record.
-// This is the single source of truth for mapping external data to Polarion.
-func (t *Task) PopulateFromExternal(record *ExternalRecord) error {
-	// Ensure base work item exists
-	if t.base == nil {
-		t.base = &polarion.WorkItem{
-			Type: "workitems",
-			Attributes: &polarion.WorkItemAttributes{
-				Type:   "task",
-				Status: "open", // This must match the initial status ID in Polarion, otherwise you will get an invalid status
-			},
-		}
-	}
-	if t.base.Attributes == nil {
-		t.base.Attributes = &polarion.WorkItemAttributes{
-			Type:   "task",
-			Status: "open", // This must match the initial status ID in Polarion, otherwise you will get an invalid status
-		}
-	}
-	// Ensure CustomFields map exists (preserve fields we don't manage)
-	if t.base.Attributes.CustomFields == nil {
-		t.base.Attributes.CustomFields = make(map[string]interface{})
-	}
-
-	// Map standard attributes
-	t.base.Attributes.Title = record.Title
-	if record.Description != "" {
-		t.base.Attributes.Description = polarion.NewHTMLContent(record.Description)
-	} else {
-		t.base.Attributes.Description = nil
-	}
-
-	// Reset typed fields (nil fields will be deleted from CustomFields)
-	t.ExternalID = nil
-	t.DueDate = nil
-	t.Priority = nil
-	t.Completed = nil
-
-	// Map external fields to typed fields
-	if record.ID != "" {
-		t.ExternalID = &record.ID
-	}
-	if record.DueDate != nil {
-		date := polarion.NewDateOnly(*record.DueDate)
-		t.DueDate = &date
-	}
-	if record.Priority != "" {
-		t.Priority = &record.Priority
-	}
-	// Only set completed if true (avoids false positives in change detection)
-	if record.IsCompleted {
-		t.Completed = &record.IsCompleted
-	}
-
-	// Save typed fields to work item's CustomFields map
-	return polarion.SaveCustomFields(t.base, t)
+// taskKey returns the sync key of an external record. Returning false skips it.
+func taskKey(r *ExternalRecord) (string, bool) {
+	return r.ID, r.ID != ""
 }
 
-// SyncResult tracks synchronization statistics
-type SyncResult struct {
-	Created int
-	Updated int
-	Skipped int
-	Errors  int
-}
-
-// BuildWorkItemMap creates a map of work items indexed by external ID
-func BuildWorkItemMap(items []polarion.WorkItem) map[string]*polarion.WorkItem {
-	result := make(map[string]*polarion.WorkItem)
-	for i := range items {
-		item := &items[i]
-		if item.Attributes != nil && item.Attributes.CustomFields != nil {
-			if extID, ok := item.Attributes.CustomFields["externalId"].(string); ok && extID != "" {
-				result[extID] = item
-			}
-		}
-	}
-	return result
-}
-
-// Sync synchronizes a single external record to Polarion
-func Sync(
-	ctx context.Context,
-	project *polarion.ProjectClient,
-	record *ExternalRecord,
-	workItemMap map[string]*polarion.WorkItem,
-	result *SyncResult,
-) error {
-	if record.ID == "" {
-		return fmt.Errorf("record has no ID")
+// populateTask maps one external record onto a work item. It is the single
+// source of truth for the mapping.
+func populateTask(wi *polarion.WorkItem, r *ExternalRecord) error {
+	// A new work item arrives with an empty ID; set the fields Polarion needs
+	// on creation. The status must match the initial status ID in the project's
+	// workflow, otherwise Polarion rejects the item.
+	if wi.ID == "" {
+		wi.Attributes.Type = "task"
+		wi.Attributes.Status = "open"
 	}
 
-	existingWorkItem, exists := workItemMap[record.ID]
-
-	if exists {
-		// Clone the work item and apply updates
-		updatedWorkItem := existingWorkItem.Clone()
-		task := &Task{base: updatedWorkItem}
-		if err := task.PopulateFromExternal(record); err != nil {
-			return fmt.Errorf("failed to apply updates: %w", err)
-		}
-
-		// Check if there are actual changes
-		if !existingWorkItem.Equals(updatedWorkItem, project.WorkItems) {
-			if err := project.WorkItems.UpdateWithOldValue(ctx, existingWorkItem, updatedWorkItem); err != nil {
-				return fmt.Errorf("failed to update: %w", err)
-			}
-			result.Updated++
-			fmt.Printf("Updated: %s (External ID: %s)\n", existingWorkItem.ID, record.ID)
-		} else {
-			result.Skipped++
-			fmt.Printf("Skipped: %s (no changes)\n", existingWorkItem.ID)
-		}
-	} else {
-		// Create new work item
-		task := &Task{}
-		if err := task.PopulateFromExternal(record); err != nil {
-			return fmt.Errorf("failed to convert: %w", err)
-		}
-		if err := project.WorkItems.Create(ctx, task.base); err != nil {
-			return fmt.Errorf("failed to create: %w", err)
-		}
-		result.Created++
-		fmt.Printf("Created: %s (External ID: %s)\n", task.base.ID, record.ID)
-
-		// Add to map for future lookups
-		workItemMap[record.ID] = task.base
+	wi.Attributes.Title = r.Title
+	if r.Description != "" {
+		wi.Attributes.Description = polarion.NewHTMLContent(r.Description)
 	}
 
-	return nil
+	t := &Task{}
+	if r.ID != "" {
+		t.ExternalID = &r.ID
+	}
+	if r.DueDate != nil {
+		d := polarion.NewDateOnly(*r.DueDate)
+		t.DueDate = &d
+	}
+	if r.Priority != "" {
+		t.Priority = &r.Priority
+	}
+	if r.IsCompleted {
+		t.Completed = &r.IsCompleted
+	}
+
+	return polarion.SaveCustomFields(wi, t)
 }
 
 func main() {
-	// Initialize client
 	client, err := polarion.New(
 		"https://polarion.example.com/rest/v1",
 		"your-bearer-token",
@@ -184,46 +91,70 @@ func main() {
 	project := client.Project("myproject")
 	ctx := context.Background()
 
-	// Step 1: Fetch existing work items from Polarion
-	fmt.Println("=== Fetching existing work items ===")
-	existingItems, err := project.WorkItems.QueryAll(ctx, "type:task AND externalId:*")
+	// Step 1: open a sync session. Polarion is queried once and the result is
+	// indexed by the externalId custom field.
+	fmt.Println("=== Opening sync session ===")
+	sync, err := polarion.NewSync(ctx, project.WorkItems,
+		"type:task AND HAS_VALUE:externalId",
+		polarion.KeyByFields("externalId"))
 	if err != nil {
-		log.Printf("Note: Query failed (expected in example): %v\n", err)
-		existingItems = []polarion.WorkItem{} // Continue with empty list
+		log.Printf("Note: query failed (expected in this example): %v", err)
+		return
 	}
-	fmt.Printf("Found %d existing items\n", len(existingItems))
 
-	// Step 2: Build lookup map by external ID
-	workItemMap := BuildWorkItemMap(existingItems)
+	// Optional: report progress, and preview a run without writing anything.
+	// *zap.SugaredLogger satisfies polarion.SyncLogger directly.
+	// sync.Logger = logger
+	// sync.DryRun = true
 
-	// Step 3: Simulate external data (replace with your data source)
-	dueDate := time.Now().AddDate(0, 0, 7) // 1 week from now
-	externalRecords := []*ExternalRecord{
+	// Step 2: stage the external rows. Rows with no matching work item are
+	// staged for creation because Create is true.
+	dueDate := time.Now().AddDate(0, 0, 7)
+	records := []ExternalRecord{
 		{ID: "EXT-001", Title: "Task 1", Description: "First task", DueDate: &dueDate, Priority: "high"},
 		{ID: "EXT-002", Title: "Task 2", Priority: "medium", IsCompleted: true},
 		{ID: "EXT-003", Title: "Task 3", Description: "Third task", Priority: "low"},
 	}
 
-	// Step 4: Sync each record
-	fmt.Println("\n=== Syncing records ===")
-	result := &SyncResult{}
-	for _, record := range externalRecords {
-		if err := Sync(ctx, project, record, workItemMap, result); err != nil {
-			fmt.Printf("Error syncing %s: %v\n", record.ID, err)
-			result.Errors++
-		}
+	fmt.Println("=== Staging records ===")
+	polarion.Stage(sync, records, polarion.Pass[ExternalRecord]{
+		Key:      taskKey,
+		Populate: populateTask,
+		Create:   true,
+	})
+
+	// Step 2b (optional): a second source can enrich the same work items. With
+	// Create left false the pass never adds work items of its own, but it does
+	// see the ones staged above, so a single item can be built from both sources
+	// and still be written once.
+	//
+	//	polarion.Stage(sync, orders, polarion.Pass[Order]{
+	//	    Key:      orderKey,
+	//	    Populate: populateOrder,
+	//	})
+
+	// Step 3: flush. Everything staged is diffed against what Polarion served,
+	// then written as one batched create and one batched update.
+	fmt.Println("=== Flushing ===")
+	result, err := sync.Flush(ctx)
+	if err != nil {
+		log.Printf("Sync finished with errors: %v", err)
 	}
 
-	// Step 5: Print summary
 	fmt.Println("\n=== Sync Summary ===")
-	fmt.Printf("Created: %d, Updated: %d, Skipped: %d, Errors: %d\n",
-		result.Created, result.Updated, result.Skipped, result.Errors)
+	fmt.Printf("Created: %d, Updated: %d, Unchanged: %d, Skipped: %d, Errors: %d\n",
+		result.Created, result.Updated, result.Unchanged, result.Skipped, result.Errors)
+
+	// Created items carry the IDs Polarion assigned, which is what you need to
+	// link work items after the sync.
+	for _, wi := range result.CreatedItems {
+		fmt.Printf("Created: %s (%s)\n", wi.ID, wi.Attributes.Title)
+	}
 
 	fmt.Println("\n=== Pattern Benefits ===")
-	fmt.Println("  ✓ Single PopulateFromExternal method for all mapping logic")
-	fmt.Println("  ✓ Clone() + Equals() for efficient change detection")
-	fmt.Println("  ✓ UpdateWithOldValue() sends only changed fields")
-	fmt.Println("  ✓ Preserves custom fields not managed by the sync")
-	fmt.Println("  ✓ Type-safe custom fields with JSON tags")
-	fmt.Println("  ✓ Minimal boilerplate code")
+	fmt.Println("  ✓ One query, one batched create, one batched update")
+	fmt.Println("  ✓ Change detection built in — unchanged items cost nothing")
+	fmt.Println("  ✓ Custom fields not declared by the mapping struct are preserved")
+	fmt.Println("  ✓ Several sources can build one work item before it is written")
+	fmt.Println("  ✓ DryRun previews a run without touching Polarion")
 }
