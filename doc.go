@@ -105,6 +105,28 @@ Work with work items using the WorkItemService:
 	// Delete a work item
 	err = project.WorkItems.Delete(ctx, "WI-123")
 
+# Syncing External Data
+
+Reconcile rows from an external system into Polarion. The engine queries once,
+detects changes, and writes one batched create and one batched update:
+
+	sync, err := polarion.NewSync(ctx, project.WorkItems,
+		"type:task AND HAS_VALUE:externalId",
+		polarion.KeyByFields("externalId"))
+
+	polarion.Stage(sync, records, polarion.Pass[ExternalRecord]{
+		Key:      func(r *ExternalRecord) (string, bool) { return r.ID, r.ID != "" },
+		Populate: populateTask, // ends with polarion.SaveCustomFields(wi, mapping)
+		Create:   true,
+	})
+
+	result, err := sync.Flush(ctx)
+
+Call Stage more than once to build work items from several sources; a later pass
+sees what earlier ones staged, so the item is still written once. Set
+Sync.DryRun to preview a run, and Sync.Logger to report progress and per-item
+diffs. Custom fields the mapping struct does not declare are preserved.
+
 # Sparse Fields
 
 Select only the fields you need to reduce response size:

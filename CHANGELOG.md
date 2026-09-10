@@ -5,6 +5,50 @@ All notable changes to `go-polarion` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-09-10
+
+### Added
+
+- **Work item sync engine.** A stage-then-flush upsert session that replaces the
+  hand-rolled "query once, index by key, clone, diff, batch write" loop that
+  every integration ends up writing.
+  - `NewSync` / `NewSyncFromItems` query Polarion once and index the result by a
+    sync key; `Stage` applies passes of source rows; `Flush` diffs everything and
+    issues one batched `Create`, one batched `UpdateBatchWithOldValues` and the
+    deletes.
+  - `Pass[Row]` is generic over the row type, so several sources with different
+    shapes can build up the same work item before it is written. A pass with
+    `Create: false` is enrichment-only; `Pass.Delete` marks items for removal.
+  - `KeyByFields` builds single or composite keys from string custom fields;
+    `IndexWorkItems` indexes a served slice and reports duplicate keys.
+  - `SyncResult` separates `Unchanged` from `Skipped`, and exposes
+    `CreatedItems` (carrying the IDs Polarion assigned), `UpdatedItems` and
+    `DeletedIDs` so work items can be linked after a sync.
+  - `Sync.DryRun` reports what a run would change without calling Polarion.
+  - `Sync.Logger` accepts any printf-style logger through the new `SyncLogger`
+    interface — `*zap.SugaredLogger` satisfies it without an adapter. Each
+    changed item is logged with its JSON diff.
+  - Items are flushed in staging order, so repeated runs produce identical
+    requests rather than depending on map iteration order.
+
+### Changed
+
+- Change detection in the sync engine uses `Equals`, which also covers custom
+  relationships, and reports the difference with `EqualsWithDiff`. Code gating
+  only on `EqualsWithDiff` misses changes confined to user reference fields.
+- The syncer example and the README's "Syncing External Data" section now use
+  the sync engine instead of the per-item `Clone`/`Equals`/`UpdateWithOldValue`
+  pattern.
+
+### Notes
+
+- Custom fields a mapping struct does not declare are preserved: `Clone` copies
+  every served field and `SaveCustomFields` only touches keys named by a struct
+  tag. Declaring another sync's fields to "protect" them is unnecessary.
+- Setting a mapping field to nil does not clear the value in Polarion on update.
+  The update diff only considers keys present in the staged item, so a removed
+  key is invisible to it.
+
 ## [0.1.18] - 2026-08-05
 
 ### Added

@@ -291,39 +291,65 @@ The batch operations:
 
 ### Syncing External Data
 
-Efficient pattern for syncing data from external systems to Polarion:
+The sync engine turns "reconcile these rows into Polarion" into a mapping struct
+and a few lines of wiring. It queries Polarion once, detects changes, and writes
+everything as one batched create and one batched update.
 
 ```go
+// The JSON tags are Polarion custom field IDs. Fields this struct does not
+// declare are left untouched, so different syncs can own different fields of
+// the same work item.
 type Task struct {
-    base       *polarion.WorkItem
     ExternalID *string            `json:"externalId,omitempty"`
     DueDate    *polarion.DateOnly `json:"dueDate,omitempty"`
 }
 
-// PopulateFromExternal maps external data to Polarion work item
-func (t *Task) PopulateFromExternal(record *ExternalRecord) error {
-    if t.base == nil {
-        t.base = &polarion.WorkItem{Type: "workitems", Attributes: &polarion.WorkItemAttributes{Type: "task"}}
+// populateTask maps one external record onto a work item.
+func populateTask(wi *polarion.WorkItem, r *ExternalRecord) error {
+    if wi.ID == "" { // new item: set what Polarion needs on creation
+        wi.Attributes.Type, wi.Attributes.Status = "task", "open"
     }
-    t.base.Attributes.Title = record.Title
-    t.ExternalID = &record.ID
-    if record.DueDate != nil {
-        date := polarion.NewDateOnly(*record.DueDate)
-        t.DueDate = &date
+    wi.Attributes.Title = r.Title
+
+    t := &Task{ExternalID: &r.ID}
+    if r.DueDate != nil {
+        d := polarion.NewDateOnly(*r.DueDate)
+        t.DueDate = &d
     }
-    return polarion.SaveCustomFields(t.base, t)
+    return polarion.SaveCustomFields(wi, t)
 }
 
-// Sync with change detection
-existing, _ := workItemMap[record.ID]
-updated := existing.Clone()
-task := &Task{base: updated}
-task.PopulateFromExternal(record)
+// Query once, indexed by the externalId custom field.
+sync, err := polarion.NewSync(ctx, project.WorkItems,
+    "type:task AND HAS_VALUE:externalId",
+    polarion.KeyByFields("externalId"))
 
-if !existing.Equals(updated, project.WorkItems) {
-    project.WorkItems.UpdateWithOldValue(ctx, existing, updated)
-}
+sync.Logger = logger // optional; *zap.SugaredLogger works as-is
+sync.DryRun = dryRun // optional; preview without writing
+
+polarion.Stage(sync, records, polarion.Pass[ExternalRecord]{
+    Key:      func(r *ExternalRecord) (string, bool) { return r.ID, r.ID != "" },
+    Populate: populateTask,
+    Create:   true, // rows with no match become new work items
+})
+
+result, err := sync.Flush(ctx)
+fmt.Printf("Created %d, Updated %d, Unchanged %d, Skipped %d, Errors %d\n",
+    result.Created, result.Updated, result.Unchanged, result.Skipped, result.Errors)
 ```
+
+Beyond the basics:
+
+- **Several sources, one work item.** Call `Stage` again with a different row
+  type. A later pass sees the items earlier passes staged — including ones
+  staged for creation — so a work item built from two sources is still written
+  once. Leave `Create` false to make a pass enrichment-only.
+- **Deletion.** Set `Pass.Delete` to mark matching items for removal.
+- **Composite keys.** `KeyByFields("purchaseOrderNumber", "orderItem")`.
+- **Linking after a sync.** `result.CreatedItems` and `sync.Item(key)` carry the
+  IDs Polarion assigned.
+- **Reproducible runs.** Items are flushed in staging order, so repeated runs
+  produce identical requests.
 
 [→ Syncer Example](examples/syncer/main.go)
 
